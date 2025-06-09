@@ -16,8 +16,9 @@ def validate_format(diagram):
         if e['type'] not in VALID_TYPES:
             errors.append(f"Entry {i} has invalid type '{e['type']}'")
         pd = e['pd_code']
-        if not (isinstance(pd, tuple) and len(pd) == 4 and all(isinstance(x, int) for x in pd)):
-            errors.append(f"Entry {i} pd_code must be 4-int tuple, got {pd}")
+        if e['type'] in ('crossing', 'resolved_0', 'resolved_inf'):
+            if not (isinstance(pd, tuple) and len(pd) == 4 and all(isinstance(x, int) for x in pd)):
+                errors.append(f"Entry {i} pd_code must be 4-int tuple, got {pd}")
     return errors
 
 def validate_labels(diagram):
@@ -95,13 +96,15 @@ def compact_graph_summary(diagram):
     edge_list = [f"({u},{v})" for u, v in G.edges()]
     pd_codes = [
         f"{i}:[{e['pd_code'][0]},{e['pd_code'][1]},{e['pd_code'][2]},{e['pd_code'][3]}]"
-        for i, e in enumerate(diagram)
+        for i, e in enumerate(diagram) if e['type'] in ('crossing', 'resolved_0', 'resolved_inf')
     ]
-    print("V:", ", ".join(v_types))
-    print("E:", ", ".join(edge_list))
-    print("PD(ouou):", "; ".join(pd_codes))
+    flat_codes = [f"{i}:[{e['pd_code']}]" for i, e in enumerate(diagram) if e['type'] in ('base_flat', 'resolved_flat')]
+    #print("V:", ", ".join(v_types),end=" ")
+    print("E:", ", ".join(edge_list), end=" ")
+    print("PD(ouou):", "; ".join(pd_codes), "flat:", "; ".join(flat_codes))
 
 # ---------------- flat-only graph ----------------
+# ここにくる時にはcrossingは全て解消されている。
 def flat_graph_from_pd(diagram):
     G = nx.MultiGraph()
     
@@ -128,7 +131,7 @@ def flat_graph_from_pd(diagram):
         if tp not in ('resolved_0', 'resolved_inf'):
             continue
 
-        a, b, c, d = e['pd_code']
+        a, b, c, d = e['pd_code'] #ここにくる場合は、resolvedなので、次数は4。
         nbs = {lbl: (slots[lbl][0] if slots[lbl][0] != idx else slots[lbl][1])
                for lbl in (a, b, c, d)}
 
@@ -160,21 +163,20 @@ def flat_graph_from_pd(diagram):
 
 def build_flat_graph(diagram, verbose=False):
     """
-    crossing はすべて消去、flat vertex は残す方式。
-    * resolved_flat も「flat vertex」とみなし残す。
-    * 残る頂点数が 0 のコンポーネントは無視（独立ループ → 係数 1）。
+    crossing は全て消去し、flat vertex だけ残して平面グラフを作る。
+    さらに「どの flat 頂点集合にも属さない根 (root)」を空ループと数え、
+    その個数も返す。
     """
-
     import networkx as nx
     from collections import defaultdict
 
-    # 1. 残す頂点集合
+    # ―― 1. keep する頂点（flat vertex と resolved_flat）
     KEEP = {
         idx for idx, e in enumerate(diagram)
         if e["type"] not in ("resolved_0", "resolved_inf")
     }
 
-    # 2. Union-Find (ラベル ←→ コンポーネント)
+    # ―― 2. Union–Find on label
     parent = {}
     def find(x):
         parent.setdefault(x, x)
@@ -187,44 +189,48 @@ def build_flat_graph(diagram, verbose=False):
         parent[find(y)] = find(x)
 
     for e in diagram:
-        a, b, c, d = e["pd_code"]
-        t = e["type"]
-        if t == "resolved_0":
+        if e["type"] == "resolved_0":
+            a, b, c, d = e["pd_code"]
             union(a, d); union(b, c)
-        elif t == "resolved_inf":
+        elif e["type"] == "resolved_inf":
+            a, b, c, d = e["pd_code"]
             union(a, b); union(c, d)
-        # flat vertexは union しない
+        # flat vertex は union しない
 
-    # 3. root → {残る頂点} への写像
+    # ―― 3. root → {keep 頂点} の写像（必ず root を登録）
     comp_to_keep = defaultdict(set)
     for v, e in enumerate(diagram):
         for lbl in e["pd_code"]:
+            r = find(lbl)
+            comp_to_keep.setdefault(r, set())   # root を必ず作成
             if v in KEEP:
-                comp_to_keep[find(lbl)].add(v)
+                comp_to_keep[r].add(v)
 
-    # 4. グラフ構築
+    # ―― 4. グラフ構築
     G = nx.MultiGraph()
     G.add_nodes_from(KEEP)
-
-    added = set()     # 辺の重複防止
+    added = set()
+    empty_loops = 0
 
     for root, verts in comp_to_keep.items():
         verts = sorted(verts)
-        if len(verts) == 0:
-            continue                    # → 独立ループ：無視
-        elif len(verts) == 1:
+        if not verts:               # ← 空集合 ⇒ 空ループ
+            empty_loops += 1
+            continue
+
+        if len(verts) == 1:         # ループ
             v = verts[0]
-            tag = (v, root)
+            tag = (v, v, root)
             if tag not in added:
                 G.add_edge(v, v, label=f"C{root}")
                 added.add(tag)
-        elif len(verts) == 2:
+        elif len(verts) == 2:       # 普通の辺
             u, v = verts
             tag = (u, v, root)
             if tag not in added:
                 G.add_edge(u, v, label=f"C{root}")
                 added.add(tag)
-        else:                           # 3 個以上：スター状に
+        else:                       # 3 頂点以上 ⇒ スター状
             head = verts[0]
             for v in verts[1:]:
                 tag = (head, v, root)
@@ -236,8 +242,9 @@ def build_flat_graph(diagram, verbose=False):
         print("--- Nodes:", G.number_of_nodes(),
               "Edges:", G.number_of_edges())
         print("Edges detail:", list(G.edges(keys=True, data=True)))
-    return G
+        print("空ループ数:", empty_loops)
 
+    return G, empty_loops
 
 # ---------------- Tutte recursion ----------------
 class BivariatePolynomial:
@@ -304,14 +311,6 @@ def flow_polynomial(G, t):
     C = nx.number_connected_components(G)
     return sp.simplify((-1)**(E - V + C) * T_at)
 
-# ---------------- Yamada_flat ----------------
-def yamada_flat(G, q):
-    Q = q + 2 + q**(-1)
-    F = flow_polynomial(G, Q)
-    E, N = G.number_of_edges(), G.number_of_nodes()
-    sign = (-1)**(N - E )
-    return sp.simplify(sign * F)
-
 # ---------------- auxiliary ----------------
 def coeffs_laurent(expr, q=sp.symbols('q')):
     expr = sp.expand(expr)
@@ -341,38 +340,52 @@ def coeffs_laurent(expr, q=sp.symbols('q')):
 
 def yamada_diagram(diagram, q):
     """
-    Skein 再帰により diagram から Yamada 多項式を計算。
-    各段階で詳細ログを print します。
+    skein 展開で Yamada 多項式を計算。
+    空ループごとに d = q + 1 + q**(-1) を掛ける。
     """
-    # 妥当性チェック
+    import sympy as sp
+    d = q + 1 + q**(-1)
+
     errors = validate_diagram(diagram)
-    if errors:
-        print("Diagram validation failed:")
-        for err in errors:
-            print("  ", err)
-        raise ValueError("Invalid diagram structure")
-    # 内部再帰関数: depth でインデント調整
-    def recurse(dgm, depth=0):
+
+    def recurse(dgm, multiplier=1, depth=0):
         indent = '  ' * depth
+        # 展開可能な crossing を探す
         for i, e in enumerate(dgm):
             if e['type'] == 'crossing':
                 print(f"{indent}expand crossing at index {i}: pd_code={e['pd_code']}")
                 total = 0
-                for coeff, typ in [(q, 'resolved_0'), (1, 'resolved_flat'), (q**-1, 'resolved_inf')]:
+                for coeff, typ in [(q, 'resolved_0'),
+                                   (1, 'resolved_flat'),
+                                   (q**-1, 'resolved_inf')]:
                     d_copy = copy.deepcopy(dgm)
                     d_copy[i]['type'] = typ
                     print(f"{indent} branch {typ} with coeff={coeff}")
-                    val = recurse(d_copy, depth+1)
-                    print(f"{indent}  → branch value = {sp.expand(val)}")
-                    total += coeff * val
-                print(f"{indent} sum@depth{depth} = {sp.expand(total)}")
+                    total += recurse(d_copy, multiplier*coeff, depth+1)
                 return total
-        G = build_flat_graph(dgm)
+
+        # leaf なら平面グラフを構築して計算
+        G, empty_loops = build_flat_graph(dgm)
         Yf = yamada_flat(G, q)
-        print(f"{indent}leaf graph: nodes={G.number_of_nodes()}, edges={G.number_of_edges()}, Yamada_flat={sp.expand(Yf)}")
-        return Yf
-    # 計算開始
-    return recurse(diagram, 0)
+        result = multiplier * (d ** empty_loops) * Yf
+        print(f"{indent}leaf graph: nodes={G.number_of_nodes()}, "
+              f"edges={G.number_of_edges()}, 空ループ数={empty_loops}, "
+              f"Yamada_flat={sp.expand(Yf)}")
+        print(f"{indent}→ weighted = {sp.expand(result)}")
+        return result
+
+    return recurse(diagram, 1, 0)
+
+
+# yamada_flat は以前の定義に加えて loop factor を yamada_diagram 側で扱う設計
+def yamada_flat(G, q):
+    Q = q + 2 + q**(-1)
+    F = flow_polynomial(G, Q)
+    E, N = G.number_of_edges(), G.number_of_nodes()
+    sign = (-1)**(N - E )
+    return sp.simplify(sign * F)
+
+
 
 def yamada_poly_and_coeffs(expr, q=sp.symbols('q'), show_zero=True):
     """
@@ -418,11 +431,59 @@ def yamada_poly_and_coeffs(expr, q=sp.symbols('q'), show_zero=True):
     poly_str = " + ".join(terms)
     print("山田多項式:", poly_str)
 
+def diagram_summary(diagram,name=''):
+    print()
+    if name:
+        print(f"*** Diagram Summary: {name} ***")
+    compact_graph_summary(diagram)
+    Y = sp.expand(yamada_diagram(diagram, q))
+    print('山田多項式=', Y)
+    print('coeffs =', coeffs_laurent(Y, q))
 
 # ---------------- main (with tests) ----------------
 if __name__ == '__main__':
     q = sp.symbols('q')
+    
+    #examples flat vertexが複数のもの。
+    #PD = [(1,2,3,4), (3,4,5),(1,2,5)]    
+    #PD = [ (1,2,5),(2,3,9),(3,4,8),(1,12,4),(9,6,10,5),(6,11,7,10),(11,8,12,7)] #yamada_toolにある例。Omega 2 graph flatが0,1,2,3 [1, 1, 1, 1, 1, -1, 1, -2, 1, -1, 1, 1, 0, 1]
+    #diag = pd_list_to_diagram(PD, {0,1,2,3})  # 3つのflat vertex
+    #diagram_summary(diag, "triangle with 5 edges")
 
+    # examples flat vertexが1つのもの。(先頭がflat vertex)
+    #PD = [(1,2,3,4),(1,2,3,4)] #[1, 1, 1]
+    #PD = [(1,2,3,4), (1,3,5,6), (2,4,6,5)] # 2_1^k [-1, -2, -2, -2, -1, -1
+    #PD = [(3,4,5,6), (5,3,1,2),(6,4,2,1) ]  # 2交点のリンク。頂点置換。[-1, -2, -2, -2, -1, -1]
+    #PD = [(1,2,3,4), (3,2,6,5), (1,4,5,6)] #2_1^k [-1, -2, -2, -2, -1, -1]
+    #PD = [(1,2,3,4), (3,2,6,5), (4,5,6,1)] #交点の上下を変えてみた。[-1, -2, -3, -2, -1]
+
+    #PD = [(1,8,4,3),(5,1,6,2), (2,6,3,7), (8,5,7,4)] # 3_1^k [1, 1, 0, 0, -1, -1, -2, -2, -2, -2, -1]
+    #PD = [(1,6,10,5),(6,1,7,2),(7,5,8,4),(10,2,9,3),(4,8,3,9)] # 3_1^kの変形 [1, 1, 0, 0, -1, -1, -2, -2, -2, -2, -1]
+
+    #PD = [(1,4,8,5), (5,6,2,1),(3,2,6,7),(4,3,7,8)]  # 3交点のリンク。3_1^l。[1, 1, 2, 1, 0, -1, -1]
+    #PD = [(1,2,3,4),(2,11,6,10),(3,12,7,11),(4,13,8,12),(13,9,14,8),(9,1,10,5),(5,6,7,14)] #D論公聴会1 [1, 1, 0, 0, 0, -1, 0, 0, 1, 1, 1, 1, -1, -1]
+    #PD = [(7, 3, 14, 1), (12, 5, 9, 11),(3, 6, 5, 8), (14, 13, 9, 6), (1, 4, 2, 13), (4, 10, 11, 2), (10, 7, 8, 12)]  # 上を置換したもの。[1, 1, 0, 0, 0, -1, 0, 0, 1, 1, 1, 1, -1, -1]
+    #PD = [(1,2,3,4),(1,9,5,8),(3,7,6,2),(7,4,8,10),(9,6,10,5)] #D論公聴会2 上を変形したもの [1, 1, 0, 0, 0, -1, 0, 0, 1, 1, 1, 1, -1, -1]
+    #PD = [(1,2,3,4),(1,10,5,9),(10,6,11,5),(6,2,7,13),(3,8,12,7),(8,4,9,14),(13,12,14,11)] #D論公聴会 非代数的 [-1, -1, 2, 1, -2, 2, 2, -2, 1, 2, -1, 0, 0, 1, -2, -1, 3, -2, -1, 3, 0, -1]
+    PD = [(1,15,14,18),(1,7,2,6),(7,3,8,2),(3,9,4,8),(4,11,5,12),(13,6,12,5),(15,10,16,9),(10,17,11,16),(13,17,14,18)] #D論公聴会 非代数的の同値変形)] 一つ上と同じ列が得られた。
+
+    diag = pd_list_to_diagram(PD, {0})
+    
+    diagram_summary(diag)
+
+    #以下は古いexample 将来的には削除予定
+    #PD_minloop = [(1,1,2,2), (3,3,4,4)] 連結でないとvalidationエラー
+    #diag = pd_list_to_diagram(PD_minloop, {0,1})   # 2 つとも flat
+    #G = build_flat_graph(diag, verbose=True)
+    #diagram_summary(diag)
+
+    # PD of a 1-crossing bouquet-like gadget
+    #pd = [(1, 2, 1, 2)]                 # one 4-valent vertex, labels 1,2 repeated
+    #pd = [(1, 2),(1,2,3,3)]                 # one 4-valent vertex, labels 1,2,3,4
+    #flat_indices = {0}                  # it's already flat
+    #D = pd_list_to_diagram(pd, flat_indices)
+    #diagram_summary(D, '1-crossing bouquet-like')
+    """
     # double triangle test
     dt = nx.MultiGraph()
     dt.add_nodes_from([0,1,2])
@@ -432,20 +493,7 @@ if __name__ == '__main__':
     Y_dt = sp.expand(yamada_flat(dt, q))
     print('Double Triangle Yamada')
     yamada_poly_and_coeffs(Y_dt, q)
-
-    """
-    # base cycle
-    bc = nx.MultiGraph()
-    bc.add_nodes_from([0,1,2])
-    for u, v in [(0,1),(1,2),(2,0)]:
-        bc.add_edge(u, v)
-    Y_bc = sp.expand(yamada_flat(bc, q))
-    print('Base 3-cycle Yamada =', Y_bc)
-    print('coeffs base cycle =', coeffs_laurent(Y_bc, q))
-    print()
-    """
-
-    # Theta3 test: 2 vertices with 3 parallel edges
+  # Theta3 test: 2 vertices with 3 parallel edges
     G_theta3 = nx.MultiGraph()
     G_theta3.add_nodes_from([0,1])
     for _ in range(3):
@@ -462,8 +510,9 @@ if __name__ == '__main__':
     Y_theta4 = sp.expand(yamada_flat(G_theta4, q))
     print('Theta4 Yamada')
     yamada_poly_and_coeffs(Y_theta4, q)
-
-    PD_octagon = [
+    """
+    """
+    PD_octahedron = [
         (1, 2, 3, 4),   # flat vertex
         (1, 5, 9, 6),   # flat vertex
         (2, 6, 10, 7),  # flat vertex
@@ -471,72 +520,6 @@ if __name__ == '__main__':
         (4, 8, 0, 5),   # flat vertex
         (9, 10, 11, 0)  # flat vertex
     ]
-    diag = pd_list_to_diagram(PD_octagon, {0,1,2,3,4,5})
-    errors = validate_diagram(diag)
-    if errors:
-        print("PD_octagon validation failed:")
-        for err in errors:
-            print("  ", err)
-    else:
-        print("build", yamada_diagram(diag, q))
-        print("Yamada octahedron diagram:", diag)
-        Y = sp.expand(yamada_diagram(diag, q))
-        print('Yamada(octahedron) =', Y)
-        print('coeffs octahedron =', coeffs_laurent(Y, q))
-    print()
-
-    # original example
-    #PD_real = [(1,2,3,4), (1,3,5,6), (2,4,6,5)]
-    PD_real = [(1,2,3,4),(1,2,3,4)]
-    diag = pd_list_to_diagram(PD_real, {0})
-    errors = validate_diagram(diag)
-    if errors:
-        print("PD_real validation failed:")
-        for err in errors:
-            print("  ", err)
-    else:
-        compact_graph_summary(diag)
-        Y = sp.expand(yamada_diagram(diag, q))
-        print('Yamada(2_1^l) =', Y)
-        print('coeffs 2_1^l =', coeffs_laurent(Y, q))
-    print()
-
-    #PD_real = [(1,2,3,4), (1,3,5,6), (2,4,6,5)]
-    PD_real = [(1,2,3,4), (3,2,6,5), (1,4,5,6)]
-    diag = pd_list_to_diagram(PD_real, {0})
-    errors = validate_diagram(diag)
-    if errors:
-        print("PD_real validation failed:")
-        for err in errors:
-            print("  ", err)
-    else:
-        compact_graph_summary(diag)
-        Y = sp.expand(yamada_diagram(diag, q))
-        print('Yamada(2_1^k) =', Y)
-        print('coeffs 2_1^k =', coeffs_laurent(Y, q))
-    print()
-
-    PD_minloop = [ (1,1,2,2), (3,3,4,4) ]
-    diag = [
-        {'type': 'base_flat', 'pd_code': PD_minloop[0]},
-        {'type': 'base_flat', 'pd_code': PD_minloop[1]},
-    ]
-
-    # デバッグ付きflat graph生成
-    G = build_flat_graph(diag, verbose=True)
-
-    PD_minloop = [(1,1,2,2), (3,3,4,4)]
-    diag = pd_list_to_diagram(PD_minloop, {0,1})   # 2 つとも flat
-    G = build_flat_graph(diag, verbose=True)
-
-    # PD of a 1-crossing bouquet-like gadget
-    pd = [(1, 2, 1, 2)]                 # one 4-valent vertex, labels 1,2 repeated
-    flat_indices = {0}                  # it's already flat
-    D = pd_list_to_diagram(pd, flat_indices)
-
-    # Make a copy and manually mark crossing 0 as resolved_0
-    D2 = copy.deepcopy(D)
-    D2[0]['type'] = 'resolved_0'
-
-    G = build_flat_graph(D2, verbose=False)
-    print(G.nodes(), G.edges(keys=True))
+    diag = pd_list_to_diagram(PD_octahedron, {0,1,2,3,4,5})
+    diagram_summary(diag,"octahedron")
+    """
