@@ -1,5 +1,9 @@
 import itertools
+import sys
 from collections import Counter, defaultdict, deque
+
+def log(msg):
+    print(msg, file=sys.stderr)
 
 def parse_ascii_multiedges_correct(line):
     """無向辺の多重数を正確に取得する（plantri形式用）"""
@@ -59,38 +63,26 @@ def find_2edge_disconnect(line, printlog=True):
             if printlog:
                 e1, n1 = edges[i]
                 e2, n2 = edges[j]
-                print(f"除去: {line.strip()} ← 辺 {e1}(#{n1+1}), {e2}(#{n2+1}) を除くと非連結")
+                log(f"除去: {line.strip()} ← 辺 {e1}(#{n1+1}), {e2}(#{n2+1}) を除くと非連結")
             return True
     return False
 
 def main():
-    lines = [
-        "6 bbcb,aada,aedd,bccf,cfff,deee",
-        "6 bbcb,aada,aded,bcfc,cfff,deee",
-        "6 bcbb,aaad,aeee,bfff,cfcc,dedd",
-        "6 bbcb,aada,aeed,bcff,cffc,deed",
-        "6 bbcb,aada,aeff,bfee,cddf,cedc",
-        "6 bccb,aadc,abea,beff,cffd,deed",
-        "6 bbcd,adda,aeef,afbb,cffc,ceed",
-        "6 bbcd,adda,adef,acbb,cfff,ceee",
-        "6 bbcc,adda,aeea,bffb,cffc,deed",
-        "6 bcde,aeec,abef,afff,acbb,cddd",
-        "6 bbcd,adca,abee,affb,cffc,deed",
-        "6 bccd,aeef,affa,afee,bddb,bdcc",
-        "6 bbcd,adca,abef,afeb,cdff,ceed",
-        "6 bbcd,adea,affd,aceb,bdff,ceec",
-        "6 bbcd,adea,aeff,afeb,bdfc,cedc",
-        "6 bbcd,adea,aeef,affb,bfcc,cedd",
-        "6 bbcd,aefa,affd,acee,bddf,becc",
-        "6 bcde,aefc,abfd,acfe,adfb,bedc"
-    ]
     cnt = 0
-    for line in lines:
+    # 標準入力から 1 行ずつ読み込む
+    for raw in sys.stdin:
+        line = raw.strip()
+        if not line:
+            continue
+
+        # find_2edge_disconnect に渡してスキップ判定
         if find_2edge_disconnect(line, printlog=True):
             continue
+
+        # スキップされなかったら出力・カウント
         print(line)
         cnt += 1
-    print(f"残った行数: {cnt}")
 
+    log(f"残った行数: {cnt}")
 if __name__ == '__main__':
     main()
