@@ -117,17 +117,18 @@ def draw_multiedge_with_labels(G, pos):
             )
 
 def visualize_and_decompose(line: str, idx: int, cfg):
+    import matplotlib.colors as mcolors
+
     neigh = parse_line(line)
     e_pair, eid_of, eid2info = build_edge_pairs_fixed(neigh)
 
-    # Dart configuration & v_pair
     v_pair = {}
+    edge_id_lists = []
     print(f"--- [{idx}] {line.strip()} ---")
     print("=== Dart configuration per vertex ===")
     for u, nb in enumerate(neigh):
         darts    = [u * 4 + i for i in range(4)]
         edge_ids = [eid_of[d] for d in darts]
-        # runs の検出
         runs = []
         start = 0
         for i in range(1,4):
@@ -137,44 +138,115 @@ def visualize_and_decompose(line: str, idx: int, cfg):
                 start = i
         if 4 - start > 1:
             runs.append((start,4))
-        # reversal
         for s,e in runs:
             if u > nb[s]:
                 edge_ids[s:e] = edge_ids[s:e][::-1]
                 darts   [s:e] = darts   [s:e][::-1]
-        print(f"Vertex {u}: edges (cyclic) = {edge_ids}")
-        # 対向ダート
+        edge_id_lists.append(edge_ids)
         for i,d in enumerate(darts):
             v_pair[d] = darts[(i+2)%4]
 
-    # decomposition
+    print("== 全頂点のedges (cyclic) 一覧 ==")
+    print(edge_id_lists)
+
+    # string分解
     loops = decompose(e_pair, eid_of, eid2info, v_pair)
     lengths = sorted([len(L) for L in loops], reverse=True)
     print(f"→ Found {len(loops)} loops: lengths = {lengths}")
-    for i,L in enumerate(loops,1):
+    for i, L in enumerate(loops, 1):
         path = " → ".join(f"{eid2info[e][0]}-{eid2info[e][1]}[{e}]" for e in L)
         print(f"   Loop {i}: {path}")
 
-    # Graph
+    def loop_to_vertex_seq(loop):
+        verts = []
+        for k, eid in enumerate(loop):
+            u, v = eid2info[eid]
+            if k == 0:
+                verts.extend([u, v])
+            else:
+                if verts[-1] == u:
+                    verts.append(v)
+                else:
+                    verts.append(u)
+        if verts[-1] == verts[0]:
+            verts = verts[:-1]
+        return verts
+
+    string_vertex_lists = [loop_to_vertex_seq(loop) for loop in loops]
+    n = len(neigh)
+    string_nums_per_vertex = [[] for _ in range(n)]
+    string_idx_per_vertex = [[] for _ in range(n)]
+    for s_idx, verts in enumerate(string_vertex_lists):
+        for v in verts:
+            string_nums_per_vertex[v].append(f's{s_idx}')
+            string_idx_per_vertex[v].append(s_idx)
+    string_lengths = [len(verts) for verts in string_vertex_lists]
+
+    # グラフ作成
     G = nx.MultiGraph()
-    G.add_nodes_from(range(len(neigh)))
-    for d,eid in eid_of.items():
+    G.add_nodes_from(range(n))
+    for d, eid in eid_of.items():
         u = d // 4
-        u2,v2 = eid2info[eid]
-        v = v2 if u2==u else u2
-        G.add_edge(u,v,key=eid)
+        u2, v2 = eid2info[eid]
+        v = v2 if u2 == u else u2
+        G.add_edge(u, v, key=eid)
 
-    pos = nx.planar_layout(G) if cfg.layout=='planar' else nx.spring_layout(G)
+    # 2重辺カウント
+    double_edge_neighbor_count = [0]*n
+    for u in range(n):
+        neighbors = set()
+        for v in G.neighbors(u):
+            if G.number_of_edges(u, v) == 2:
+                neighbors.add(v)
+        double_edge_neighbor_count[u] = len(neighbors)
 
-    # Plot
+    # -- ここが今回の"肝"です --
+    # string_idx_per_vertex 例: [[0, 1], [0, 0], ...] など
+    string_len_hashkey_per_vertex = []
+    for idxs in string_idx_per_vertex:
+        if len(idxs) == 2 and idxs[0] == idxs[1]:
+            l = string_lengths[idxs[0]]
+            string_len_hashkey_per_vertex.append( (l*l,) )
+        else:
+            lens = tuple(sorted(string_lengths[sidx] for sidx in idxs))
+            string_len_hashkey_per_vertex.append(lens)
+    # -- ここまで --
+
+    # 1次ハッシュ
+    vertex_hash_list = []
+    for v in range(n):
+        h = hash(string_len_hashkey_per_vertex[v] + (double_edge_neighbor_count[v],))
+        vertex_hash_list.append(h)
+
+    # 2次ハッシュ（隣接＋自分自身の1次ハッシュ）
+    second_hash_list = []
+    for v in range(n):
+        neighbors = list(G.neighbors(v))
+        hashes = [vertex_hash_list[nbr] for nbr in neighbors] + [vertex_hash_list[v]]
+        second_hash = hash(tuple(sorted(hashes)))
+        second_hash_list.append(second_hash)
+
+    # 出力
+    print("=== 各頂点ごとのstring所属番号リスト, 2重辺数, 1次ハッシュ, 2次ハッシュ ===")
+    for v in range(n):
+        print(f"  頂点{v}: {string_nums_per_vertex[v]} {double_edge_neighbor_count[v]} {vertex_hash_list[v]} {second_hash_list[v]}")
+
+    # 2次ハッシュで色分け
+    palette = list(mcolors.TABLEAU_COLORS.values()) + list(mcolors.BASE_COLORS.values())
+    unique_hashes = list(sorted(set(second_hash_list)))
+    hash_to_color = {h: palette[i % len(palette)] for i, h in enumerate(unique_hashes)}
+    node_colors = [hash_to_color[h] for h in second_hash_list]
+
+    labels = {v: str(v) for v in range(n)}
+
+    pos = nx.planar_layout(G) if cfg.layout == 'planar' else nx.spring_layout(G)
     fig = plt.figure(figsize=(5,5))
     plt.title(line.strip())
-    nx.draw_networkx_nodes(G, pos, node_color="lightgray")
-    nx.draw_networkx_labels(G, pos)
+    nx.draw_networkx_nodes(G, pos, node_color=node_colors)
+    nx.draw_networkx_labels(G, pos, labels)
     draw_multiedge_with_labels(G, pos)
     plt.axis('off')
 
-    # save or show
     if cfg.outdir:
         os.makedirs(cfg.outdir, exist_ok=True)
         fname = os.path.join(cfg.outdir, f'graph_{idx:03d}.png')
@@ -183,6 +255,7 @@ def visualize_and_decompose(line: str, idx: int, cfg):
     if not cfg.noshow:
         plt.show()
     plt.close(fig)
+
 
 def main():
     cfg = parse_args()
