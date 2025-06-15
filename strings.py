@@ -116,6 +116,45 @@ def draw_multiedge_with_labels(G, pos):
                 fontsize=8, ha="center", va="center"
             )
 
+def draw_multiedge_with_labels(G, pos, edgeid_to_color=None):
+    import matplotlib
+    ax = plt.gca()
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for u, v, k in G.edges(keys=True):
+        groups[tuple(sorted((u, v)))].append((u, v, k))
+    max_m = max(len(es) for es in groups.values())
+    rad_list = [i * 0.2 for i in range(-(max_m-1), max_m, 2)]
+    for (u, v), es in groups.items():
+        es_sorted = sorted(es, key=lambda x: x[2])
+        start = (max_m - len(es_sorted)) // 2
+        for (u2, v2, k), rad in zip(es_sorted, rad_list[start:start+len(es_sorted)]):
+            color = 'black'
+            if edgeid_to_color is not None:
+                color = edgeid_to_color.get(k, 'gray')
+            patch = matplotlib.patches.FancyArrowPatch(
+                pos[u2], pos[v2],
+                connectionstyle=f"arc3,rad={rad}",
+                arrowstyle='-',
+                mutation_scale=10,
+                linewidth=2.0,
+                color=color,
+                shrinkA=0, shrinkB=0
+            )
+            ax.add_patch(patch)
+            # ラベル
+            xm = (pos[u2][0] + pos[v2][0]) / 2
+            ym = (pos[u2][1] + pos[v2][1]) / 2
+            dx, dy = pos[v2][1] - pos[u2][1], -(pos[v2][0] - pos[u2][0])
+            norm = math.hypot(dx, dy) or 1
+            off = rad * 0.5
+            plt.text(
+                xm + dx/norm*off,
+                ym + dy/norm*off,
+                str(k),
+                fontsize=8, ha="center", va="center"
+            )
+
 def visualize_and_decompose(line: str, idx: int, cfg):
     import matplotlib.colors as mcolors
 
@@ -200,8 +239,7 @@ def visualize_and_decompose(line: str, idx: int, cfg):
                 neighbors.add(v)
         double_edge_neighbor_count[u] = len(neighbors)
 
-    # -- ここが今回の"肝"です --
-    # string_idx_per_vertex 例: [[0, 1], [0, 0], ...] など
+    # string番号を用いて: 同じstring2回→[長さ*長さ]、異なるstring→[len1, len2]
     string_len_hashkey_per_vertex = []
     for idxs in string_idx_per_vertex:
         if len(idxs) == 2 and idxs[0] == idxs[1]:
@@ -210,7 +248,6 @@ def visualize_and_decompose(line: str, idx: int, cfg):
         else:
             lens = tuple(sorted(string_lengths[sidx] for sidx in idxs))
             string_len_hashkey_per_vertex.append(lens)
-    # -- ここまで --
 
     # 1次ハッシュ
     vertex_hash_list = []
@@ -226,15 +263,22 @@ def visualize_and_decompose(line: str, idx: int, cfg):
         second_hash = hash(tuple(sorted(hashes)))
         second_hash_list.append(second_hash)
 
-    # 出力
     print("=== 各頂点ごとのstring所属番号リスト, 2重辺数, 1次ハッシュ, 2次ハッシュ ===")
     for v in range(n):
         print(f"  頂点{v}: {string_nums_per_vertex[v]} {double_edge_neighbor_count[v]} {vertex_hash_list[v]} {second_hash_list[v]}")
 
-    # 2次ハッシュで色分け
-    palette = list(mcolors.TABLEAU_COLORS.values()) + list(mcolors.BASE_COLORS.values())
+    # --- string (ループ) ごとの色決定 ---
+    loop_palette = list(mcolors.TABLEAU_COLORS.values()) + list(mcolors.BASE_COLORS.values())
+    edgeid_to_color = {}
+    for idx, loop in enumerate(loops):
+        color = loop_palette[idx % len(loop_palette)]
+        for eid in loop:
+            edgeid_to_color[eid] = color
+
+    # 2次ハッシュでノード色分け
+    node_palette = list(mcolors.TABLEAU_COLORS.values()) + list(mcolors.BASE_COLORS.values())
     unique_hashes = list(sorted(set(second_hash_list)))
-    hash_to_color = {h: palette[i % len(palette)] for i, h in enumerate(unique_hashes)}
+    hash_to_color = {h: node_palette[i % len(node_palette)] for i, h in enumerate(unique_hashes)}
     node_colors = [hash_to_color[h] for h in second_hash_list]
 
     labels = {v: str(v) for v in range(n)}
@@ -244,7 +288,10 @@ def visualize_and_decompose(line: str, idx: int, cfg):
     plt.title(line.strip())
     nx.draw_networkx_nodes(G, pos, node_color=node_colors)
     nx.draw_networkx_labels(G, pos, labels)
-    draw_multiedge_with_labels(G, pos)
+
+    # 曲がった多重辺＋string色で描画
+    draw_multiedge_with_labels(G, pos, edgeid_to_color=edgeid_to_color)
+
     plt.axis('off')
 
     if cfg.outdir:
@@ -255,6 +302,7 @@ def visualize_and_decompose(line: str, idx: int, cfg):
     if not cfg.noshow:
         plt.show()
     plt.close(fig)
+
 
 
 def main():
