@@ -82,56 +82,31 @@ def decompose(e_pair, eid_of, eid2info, v_pair):
             loops.append(loop)
     return loops
 
-def draw_multiedge_with_labels(G, pos):
-    ax = plt.gca()
-    groups = defaultdict(list)
-    for u, v, k in G.edges(keys=True):
-        groups[tuple(sorted((u, v)))].append((u, v, k))
-    max_m = max(len(es) for es in groups.values())
-    rad_list = [i * 0.2 for i in range(-(max_m-1), max_m, 2)]
-    for (u, v), es in groups.items():
-        es_sorted = sorted(es, key=lambda x: x[2])
-        start = (max_m - len(es_sorted)) // 2
-        for (u2, v2, k), rad in zip(es_sorted, rad_list[start:start+len(es_sorted)]):
-            patch = matplotlib.patches.FancyArrowPatch(
-                pos[u2], pos[v2],
-                connectionstyle=f"arc3,rad={rad}",
-                arrowstyle='-',
-                mutation_scale=10,
-                linewidth=1.0,
-                color='black',
-                shrinkA=0, shrinkB=0
-            )
-            ax.add_patch(patch)
-            # ラベル
-            xm = (pos[u2][0] + pos[v2][0]) / 2
-            ym = (pos[u2][1] + pos[v2][1]) / 2
-            dx, dy = pos[v2][1] - pos[u2][1], -(pos[v2][0] - pos[u2][0])
-            norm = math.hypot(dx, dy) or 1
-            off = rad * 0.5
-            plt.text(
-                xm + dx/norm*off,
-                ym + dy/norm*off,
-                str(k),
-                fontsize=8, ha="center", va="center"
-            )
-
 def draw_multiedge_with_labels(G, pos, edgeid_to_color=None):
     import matplotlib
-    ax = plt.gca()
+    import math
     from collections import defaultdict
+
+    ax = plt.gca()
+    # group edges by unordered node‐pair
     groups = defaultdict(list)
     for u, v, k in G.edges(keys=True):
         groups[tuple(sorted((u, v)))].append((u, v, k))
-    max_m = max(len(es) for es in groups.values())
-    rad_list = [i * 0.2 for i in range(-(max_m-1), max_m, 2)]
+
     for (u, v), es in groups.items():
+        # sort by edge‐key so labels stay consistent
         es_sorted = sorted(es, key=lambda x: x[2])
-        start = (max_m - len(es_sorted)) // 2
-        for (u2, v2, k), rad in zip(es_sorted, rad_list[start:start+len(es_sorted)]):
+        m = len(es_sorted)
+        # single edge → [0], double → [-0.2, +0.2], triple → [-0.4, 0, +0.4], etc.
+        rad_list = [i * 0.2 for i in range(-(m - 1), m, 2)]
+
+        for (u2, v2, k), rad in zip(es_sorted, rad_list):
+            # choose color if given
             color = 'black'
             if edgeid_to_color is not None:
                 color = edgeid_to_color.get(k, 'gray')
+
+            # draw the (possibly curved) edge
             patch = matplotlib.patches.FancyArrowPatch(
                 pos[u2], pos[v2],
                 connectionstyle=f"arc3,rad={rad}",
@@ -139,21 +114,31 @@ def draw_multiedge_with_labels(G, pos, edgeid_to_color=None):
                 mutation_scale=10,
                 linewidth=2.0,
                 color=color,
-                shrinkA=0, shrinkB=0
+                shrinkA=0, shrinkB=0,
+                zorder=1
             )
             ax.add_patch(patch)
-            # ラベル
+
+            # compute label position: midpoint plus small offset perpendicular to edge
             xm = (pos[u2][0] + pos[v2][0]) / 2
             ym = (pos[u2][1] + pos[v2][1]) / 2
-            dx, dy = pos[v2][1] - pos[u2][1], -(pos[v2][0] - pos[u2][0])
+            dx = pos[v2][1] - pos[u2][1]
+            dy = -(pos[v2][0] - pos[u2][0])
             norm = math.hypot(dx, dy) or 1
-            off = rad * 0.5
-            plt.text(
-                xm + dx/norm*off,
-                ym + dy/norm*off,
+            # ensure even rad=0 (straight) edges get a little offset
+            off = 0.01 if rad == 0 else rad * 0.5
+
+            ax.text(
+                xm + dx / norm * off,
+                ym + dy / norm * off,
                 str(k),
-                fontsize=8, ha="center", va="center"
+                fontsize=12,
+                ha="center", va="center",
+                clip_on=False,
+                zorder=2
             )
+
+    
 
 def visualize_and_decompose(line: str, idx: int, cfg):
     import matplotlib.colors as mcolors
