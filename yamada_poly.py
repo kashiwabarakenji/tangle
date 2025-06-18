@@ -4,6 +4,8 @@ import sympy as sp
 import networkx as nx
 import copy
 from collections import defaultdict, Counter
+import json
+from sympy import symbols
 
 # ---------------- 妥当性チェック ----------------
 def validate_format(diagram):
@@ -71,8 +73,8 @@ def validate_diagram(diagram):
 # ---------------- PD → diagram ----------------
 def pd_list_to_diagram(pd_list, flat_indices):
     return [
-        {'type': 'base_flat' if i in flat_indices else 'crossing',
-         'pd_code': pd}
+        { 'type': 'base_flat' if i in flat_indices else 'crossing',
+          'pd_code': tuple(pd) }         # ← ここで tuple() に
         for i, pd in enumerate(pd_list)
     ]
 
@@ -338,29 +340,32 @@ def coeffs_laurent(expr, q=sp.symbols('q')):
             result.append(val)
     return result
 
-def yamada_diagram(diagram, q):
+def yamada_diagram(diagram, q, logFlag=False):
     """
     skein 展開で Yamada 多項式を計算。
+    logFlag=True で展開過程のログを出力。
     空ループごとに d = q + 1 + q**(-1) を掛ける。
     """
-    import sympy as sp
     d = q + 1 + q**(-1)
-
     errors = validate_diagram(diagram)
+    if errors:
+        raise ValueError("Diagram validation failed: " + "; ".join(errors))
 
     def recurse(dgm, multiplier=1, depth=0):
         indent = '  ' * depth
         # 展開可能な crossing を探す
         for i, e in enumerate(dgm):
             if e['type'] == 'crossing':
-                print(f"{indent}expand crossing at index {i}: pd_code={e['pd_code']}")
+                if logFlag:
+                    print(f"{indent}expand crossing at index {i}: pd_code={e['pd_code']}")
                 total = 0
                 for coeff, typ in [(q, 'resolved_0'),
                                    (1, 'resolved_flat'),
                                    (q**-1, 'resolved_inf')]:
                     d_copy = copy.deepcopy(dgm)
                     d_copy[i]['type'] = typ
-                    print(f"{indent} branch {typ} with coeff={coeff}")
+                    if logFlag:
+                        print(f"{indent} branch {typ} with coeff={coeff}")
                     total += recurse(d_copy, multiplier*coeff, depth+1)
                 return total
 
@@ -368,14 +373,30 @@ def yamada_diagram(diagram, q):
         G, empty_loops = build_flat_graph(dgm)
         Yf = yamada_flat(G, q)
         result = multiplier * (d ** empty_loops) * Yf
-        print(f"{indent}leaf graph: nodes={G.number_of_nodes()}, "
-              f"edges={G.number_of_edges()}, 空ループ数={empty_loops}, "
-              f"Yamada_flat={sp.expand(Yf)}")
-        print(f"{indent}→ weighted = {sp.expand(result)}")
+        if logFlag:
+            print(f"{indent}leaf graph: nodes={G.number_of_nodes()}, "
+                  f"edges={G.number_of_edges()}, 空ループ数={empty_loops}, "
+                  f"Yamada_flat={sp.expand(Yf)}")
+            print(f"{indent}→ weighted = {sp.expand(result)}")
         return result
 
     return recurse(diagram, 1, 0)
 
+
+def diagram_summary(diagram, logFlag=False):
+    """
+    ダイアグラムの概要表示と Yamada 多項式の計算。
+    logFlag=True で展開ログも表示。
+    """
+    # グラフ概要
+    compact_graph_summary(diagram)
+    # 多項式計算
+    q = sp.symbols('q')
+    Y = sp.expand(yamada_diagram(diagram, q, logFlag=logFlag))
+    coeffs = coeffs_laurent(Y, q)
+    print('山田多項式 =', Y)
+    print('coeffs =', coeffs)
+    print(diagram)
 
 # yamada_flat は以前の定義に加えて loop factor を yamada_diagram 側で扱う設計
 def yamada_flat(G, q):
@@ -431,18 +452,29 @@ def yamada_poly_and_coeffs(expr, q=sp.symbols('q'), show_zero=True):
     poly_str = " + ".join(terms)
     print("山田多項式:", poly_str)
 
-def diagram_summary(diagram,name=''):
-    print()
-    if name:
-        print(f"*** Diagram Summary: {name} ***")
-    compact_graph_summary(diagram)
-    Y = sp.expand(yamada_diagram(diagram, q))
-    print('山田多項式=', Y)
-    print('coeffs =', coeffs_laurent(Y, q))
-
 # ---------------- main (with tests) ----------------
 if __name__ == '__main__':
-    q = sp.symbols('q')
+    # Colab のフォーム機能を使うなら、このセルを notebook 上で実行する
+    #@title **PDコードとオプションの入力** 📝
+    pd_list_str   = '[[0, 1, 2, 3], [0, 4, 5, 1], [2, 6, 7, 3], [4, 8, 9, 5], [6, 10, 11, 7], [8, 11, 10, 9]]'  #@param {type:"string"}
+    flat_indices  = [0]                        #@param {type:"raw"}
+    rev_crossings = []                         #@param {type:"raw"}
+    logFlag       = False                      #@param {type:"boolean"}
+
+    pd_list = json.loads(pd_list_str)
+    # JSON→list なのでタプル化だけ注意
+    pd_list = [tuple(p) for p in pd_list]
+    diag = pd_list_to_diagram(pd_list, set(flat_indices))
+    for i in rev_crossings:
+        seq = diag[i]['pd_code']           # [a,b,c,d]
+        rotated = seq[1:] + seq[:1]        # [b,c,d] + [a] → [b,c,d,a]
+        diag[i]['pd_code'] = tuple(rotated)
+
+    # ログ出力の on/off
+    diagram_summary(diag, logFlag)
+
+#if __name__ == '__main__':
+#    q = sp.symbols('q')
     
     #examples flat vertexが複数のもの。
     #PD = [(1,2,3,4), (3,4,5),(1,2,5)]    
@@ -466,9 +498,9 @@ if __name__ == '__main__':
     #PD = [[0, 1, 2, 3], [5, 1, 0, 4], [2, 6, 7, 8], [9, 10, 4, 3], [10, 11, 6, 5], [8, 7, 11, 9]] #{0} 5_6^k [1, 0, -2, 0, 0, -1, 0, -1, -1, -2, -1, 0, -1, 0, 1, -1, -1]
     #PD = [[0, 1, 2, 3], [4, 5, 1, 0], [8, 2, 6, 7], [3, 9, 10, 4], [10, 11, 6, 5], [9, 8, 7, 11]]  #{4} 5_7^k [-1, -1, 1, 1, 0, 2, 1, 0, 1, 0, 0, -2, -1, -1, -3, -2, -1, -2, -1]
     #PD = [[0, 1, 2, 3], [4, 5, 1, 0], [2, 6, 7, 8], [9, 10, 4, 3], [10, 11, 6, 5], [8, 7, 11, 9]] #{3} 5_8^k [1, 0, 0, 0, -1, 0, -1, -1, -2, -2, -1, -1, -1]
-    PD = [[0, 1, 2, 3], [1, 0, 4, 5], [8, 2, 6, 7], [10, 4, 3, 9], [11, 6, 5, 10], [7, 11, 9, 8]] #{5} 5_6^k [1, 0, -2, 0, 0, -1, 0, -1, -1, -2, -1, 0, -1, 0, 1, -1, -1]
+    #PD = [[0, 1, 2, 3], [1, 0, 4, 5], [8, 2, 6, 7], [10, 4, 3, 9], [11, 6, 5, 10], [7, 11, 9, 8]] #{5} 5_6^k [1, 0, -2, 0, 0, -1, 0, -1, -1, -2, -1, 0, -1, 0, 1, -1, -1]
     #PD = [[0, 1, 2, 3], [1, 0, 4, 5], [8, 2, 6, 7], [3, 9, 10, 4], [7, 6, 5, 11], [9, 8, 11, 10]] #{0} 5_3^l [-1, -1, 1, 1, 0, 1, 0, -1, 0, 0, 1, 0, 1, 1, -1, 0, 1]
-    diag = pd_list_to_diagram(PD, {5})
+    #diag = pd_list_to_diagram(PD, {5})
     #--------
 
     # examples flat vertexが1つのもの。(先頭がflat vertex)
@@ -510,7 +542,7 @@ if __name__ == '__main__':
 
     #diag = pd_list_to_diagram(PD, {0})
     
-    diagram_summary(diag)
+    #diagram_summary(diag)
 
     #以下は古いexample 将来的には削除予定
     #PD_minloop = [(1,1,2,2), (3,3,4,4)] 連結でないとvalidationエラー
