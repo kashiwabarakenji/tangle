@@ -72,15 +72,14 @@ def decompose(e_pair, eid_of, eid2info, v_pair):
 
 def adjust_alternating_rotation(edge_id_lists, loops, eid2info):
     """
-    edge_id_lists を、各 string（loops）を進むたびに
-    『次に進む辺』の偶奇が over/under で交互になるよう回転させる。
+    各 string（loops）を進むたびに『次に進む辺』の偶奇が over/under で交互になるよう、
+    各頂点の辺リストを最小シフトで毎回調整するアプローチ。
+
+    - edge_id_lists: 各頂点ごとの cyclic edge-list のリスト
+    - loops: string ごとに探索された edge-ID のループ一覧
+    - eid2info: edge-ID → (u,v) のマッピング
     """
-
-    # 頂点ごとに「確定済みか」「現在のシフト量」を持つ
-    fixed  = [False] * len(edge_id_lists)
-    shift  = [0] * len(edge_id_lists)      # 記録用（デバッグにも便利）
-
-    # ユーティリティ: 辺列と eid2info から「出発頂点」リストを得る
+    # ユーティリティ: ループから頂点シーケンスを作成
     def loop_vertices(loop):
         verts = []
         for k, eid in enumerate(loop):
@@ -89,34 +88,26 @@ def adjust_alternating_rotation(edge_id_lists, loops, eid2info):
                 verts.extend([u, v])
             else:
                 verts.append(v if verts[-1] == u else u)
-        return verts[:-1]  # 長さ = len(loop)
+        return verts[:-1]
 
-    # 各 string について処理
+    # 各ループを独立に処理
     for loop in loops:
         verts = loop_vertices(loop)
-        parity_needed = 0                   # 0: even(over), 1: odd(under)
+        parity_needed = 0  # 0: even(over), 1: odd(under)
 
         for eid, v in zip(loop, verts):
             rot = edge_id_lists[v]
-            idx = rot.index(eid)            # 現在 eid が何番目か
+            idx = rot.index(eid)
+            # 0〜3 のシフトを試し、目的の偶奇に最小シフトを適用
+            for sh in range(4):
+                new_idx = (idx - sh) % 4
+                if new_idx % 2 == parity_needed:
+                    edge_id_lists[v] = rot[sh:] + rot[:sh]
+                    break
+            parity_needed ^= 1
 
-            if not fixed[v]:
-                # eid が偶奇 parity_needed になるよう最小シフトを取る
-                for sh in range(4):
-                    new_idx = (idx - sh) % 4
-                    if new_idx % 2 == parity_needed:
-                        # 左に sh シフト
-                        edge_id_lists[v] = rot[sh:] + rot[:sh]
-                        shift[v] = (shift[v] + sh) % 4
-                        break
-                fixed[v] = True
-            else:
-                # すでに確定している → 偶奇が合わなければ 180° 反転だけ試す
-                new_idx = edge_id_lists[v].index(eid)
-                if new_idx % 2 != parity_needed:
-                    edge_id_lists[v] = edge_id_lists[v][2:] + edge_id_lists[v][:2]
-                    shift[v] = (shift[v] + 2) % 4
+    return edge_id_lists
 
-            parity_needed ^= 1              # 交互に反転
+          # 交互に反転
 
     return edge_id_lists
