@@ -9,8 +9,10 @@ TEMPLATE = '''import bpy, mathutils, math
 # ───────────────────────────────────────────
 # 0. シーンをクリア
 # ───────────────────────────────────────────
-bpy.ops.object.select_all(action='SELECT')
-bpy.ops.object.delete(use_global=False)
+#bpy.ops.object.select_all(action='SELECT')
+#bpy.ops.object.delete(use_global=False)
+for obj in list(bpy.data.objects):
+    bpy.data.objects.remove(obj, do_unlink=True)
 
 # ───────────────────────────────────────────
 # 1. 入力データ
@@ -122,38 +124,84 @@ for route_idx, route in enumerate(vertex_edge_routes):
     mat_debug_edge  = bpy.data.materials.new(name="DebugBlue")
     mat_debug_edge.diffuse_color  = (0.0, 0.0, 1.0, 1.0)
 
-    debug_r = sphere_r * 0.5
-    for p, kind in zip(pts, pt_types):
-        bpy.ops.mesh.primitive_uv_sphere_add(
-            radius=debug_r,
-            location=(p.x, p.y, p.z),
-            segments=16,
-            ring_count=8
-        )
-        obj = bpy.context.active_object
-        if kind == 'P':
-            obj.data.materials.append(mat_debug_inter)
-        else:
-            obj.data.materials.append(mat_debug_edge)
-
-    # --- Bezier Curve 作成 & チューブ化 ---
+    # --- Bezier Curve 作成 ---
     curve_data = bpy.data.curves.new(f'GraphTube_{{route_idx}}', 'CURVE')
     curve_data.dimensions = '3D'
     spline = curve_data.splines.new('BEZIER')
-    spline.bezier_points.add(len(pts) - 1)
+    # --- ここで n_ptsチェック＆安全なbezier_points追加 ---
+    n_pts = len(pts)
+    print("len(pts):", n_pts)
+    if n_pts == 0:
+        print(f"WARNING: pts is empty for route_idx={{route_idx}}")
+        continue   # このルートをスキップ
+    if n_pts > 1:
+        spline.bezier_points.add(n_pts - 1)  # もともと1点あるので-1
+    print("len(spline.bezier_points):", len(spline.bezier_points))
+    assert len(spline.bezier_points) == n_pts
+
+    #spline.bezier_points.add(len(pts) - 1)
     for idx, p in enumerate(pts):
         bp = spline.bezier_points[idx]
         bp.co = p
         bp.handle_left_type = bp.handle_right_type = 'AUTO'
-
     spline.use_cyclic_u = is_cyclic
-
     curve_data.resolution_u     = 16
     curve_data.bevel_depth      = 0.01
     curve_data.bevel_resolution = 32
 
     tube = bpy.data.objects.new(f'GraphTube_{{route_idx}}', curve_data)
     bpy.context.collection.objects.link(tube)
+
+    # 1. チューブをアクティブ＆編集モードへ
+    bpy.context.view_layer.objects.active = tube
+    tube.select_set(True)
+    bpy.ops.object.mode_set(mode='EDIT')
+
+    debug_r = sphere_r * 0.5
+    for idx, (p, kind) in enumerate(zip(pts, pt_types)):
+        # 2. 一度オブジェクトモードに戻って球・エンプティ追加
+        bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.context.view_layer.objects.active = None
+        bpy.ops.mesh.primitive_uv_sphere_add(
+            radius=debug_r,
+            location=(p.x, p.y, p.z),
+            segments=16,
+            ring_count=8
+        )
+        ball = bpy.context.active_object
+        ball.location = (p.x, p.y, p.z)
+        if kind == 'P':
+            ball.data.materials.append(mat_debug_inter)
+        else:
+            ball.data.materials.append(mat_debug_edge)
+
+        empty = bpy.data.objects.new(f'Empty_{{route_idx}}_{{idx}}', None)
+        empty.empty_display_type = 'PLAIN_AXES'
+        empty.location = (p.x, p.y, p.z)
+        bpy.context.collection.objects.link(empty)
+        ball.parent = empty
+
+        # 3. 再度tubeをアクティブに戻して編集モード
+        bpy.context.view_layer.objects.active = tube
+        tube.select_set(True)
+        bpy.ops.object.mode_set(mode='EDIT')
+
+        # 4. フックモディファイア追加
+        hook = tube.modifiers.new(name=f"Hook_{{route_idx}}_{{idx}}", type='HOOK')
+        hook.object = empty
+        hook.strength = 1.0
+
+        # 5. 制御点選択＆フック割当
+        spline = tube.data.splines[0]
+        for bp in spline.bezier_points:
+            bp.select_control_point = False
+        spline.bezier_points[idx].select_control_point = True
+        bpy.ops.object.hook_assign(modifier=hook.name)
+        spline.bezier_points[idx].select_control_point = False
+
+    # 最後はオブジェクトモードに戻す
+    bpy.ops.object.mode_set(mode='OBJECT')
+    tube.select_set(False)
 
     # --- ★ 輪っかごとに色を分ける ---
     if route_idx == 0:
