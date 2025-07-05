@@ -73,6 +73,8 @@ mat_e = bpy.data.materials.new(name="LabelBlue")
 mat_e.diffuse_color = (0.0, 0.0, 1.0, 1.0)
 edge_label_offset = 0.08
 
+empties = {{}}
+
 for route_idx, route in enumerate(vertex_edge_routes):
     # --- route構造チェック ---
     if len(route) < 3 or len(route) % 2 == 0:
@@ -180,6 +182,8 @@ for route_idx, route in enumerate(vertex_edge_routes):
     tube.select_set(True)
     bpy.ops.object.mode_set(mode='EDIT')
 
+    
+    vertex_counter = 0
     debug_r = sphere_r * 0.5
     for idx, (p, kind) in enumerate(zip(pts, pt_types)):
         # 2. 一度オブジェクトモードに戻って球・エンプティ追加
@@ -192,7 +196,7 @@ for route_idx, route in enumerate(vertex_edge_routes):
             ring_count=8
         )
         ball = bpy.context.active_object
-        ball.location = (p.x, p.y, p.z)
+        #ball.location = (p.x, p.y, p.z)
         if kind == 'P':
             ball.data.materials.append(mat_debug_inter)
         else:
@@ -202,6 +206,13 @@ for route_idx, route in enumerate(vertex_edge_routes):
         empty.empty_display_type = 'PLAIN_AXES'
         empty.location = (p.x, p.y, p.z)
         bpy.context.collection.objects.link(empty)
+        if kind == 'P':
+            v_id = str(route[vertex_counter * 2])   # 偶数番目が必ず頂点
+            empties[v_id] = empty                   # 登録
+            vertex_counter += 1 
+
+        empties[(route_idx, idx)] = empty     # route_idx, idx で引けるように
+
         ball.parent = empty
         ball.location = (0, 0, 0)
 
@@ -262,7 +273,14 @@ for route_idx, route in enumerate(vertex_edge_routes):
             txt_obj.data.materials.append(mat_e)
             bpy.context.collection.objects.link(txt_obj)
 
+            par = empties.get((route_idx, i))
+            if par:
+                txt_obj.parent = par
+                # Empty 原点に一致させる
+                txt_obj.location = (0, 0, edge_label_offset)
+
 # --- 頂点ラベルは全体共通で一回だけ ---
+
 for v, coord in coords.items():
     txt_curve = bpy.data.curves.new(name=f"V{{v}}", type='FONT')
     txt_curve.body = str(v)
@@ -271,6 +289,12 @@ for v, coord in coords.items():
     txt_obj.scale    = (0.2, 0.2, 0.2)
     txt_obj.data.materials.append(mat_v)
     bpy.context.collection.objects.link(txt_obj)
+
+    par = empties.get(str(v))   # kind=='P' のとき登録済み
+    if par:
+        
+        txt_obj.parent = par
+        txt_obj.location = (0, 0, sphere_r + 0.1)
 
 # ───────────────────────────────────────────
 # 7. カメラ & 三灯ライティング
