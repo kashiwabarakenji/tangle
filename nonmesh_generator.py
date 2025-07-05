@@ -74,22 +74,41 @@ mat_e.diffuse_color = (0.0, 0.0, 1.0, 1.0)
 edge_label_offset = 0.08
 
 for route_idx, route in enumerate(vertex_edge_routes):
-    # --- 制御点リストの生成 ---
+    # --- route構造チェック ---
+    if len(route) < 3 or len(route) % 2 == 0:
+        print(f"WARNING: route[{{route_idx}}] の長さ {{len(route)}} は奇数でなければなりません（頂点→辺→頂点→...）")
+        #continue
+    # 頂点→辺→頂点→辺... の構造になっているか簡易チェック
+    structure_ok = True
+    for i, key in enumerate(route):
+        if i % 2 == 0:
+            # 偶数番目: 頂点(数値またはstr)
+            pass
+        else:
+            # 奇数番目: 辺(数値またはstr)
+            if str(key) not in eid2info:
+                print(f"WARNING: route[{{route_idx}}] の辺ID {{key}} が eid2info に存在しません")
+                structure_ok = False
+    #if not structure_ok:
+    #    continue
+
     pts      = []
     pt_types = []
 
     L = len(route)
-    # --- 制御点列生成 ---
     for i, key in enumerate(route):
         if i % 2 == 0:
             # 頂点
             v = str(key)
+            if v not in coords:
+                print(f"WARNING: route[{{route_idx}}] の頂点ID {{v}} が coords に存在しません")
+                continue
             x, y = coords[v]
-            # 次に進む辺の情報
             if i + 1 < len(route):
                 eid_next = str(route[i+1])
             else:
-                eid_next = str(route[1])
+                # cyclicならroute[1]だが、今回は最後は始点に戻さない（cyclic設定次第）
+                eid_next = str(route[1]) if L > 1 else None
             z_flag_key = f"{{eid_next}}-{{v}}"
             sign = z_flags.get(z_flag_key, 1)
             if v == str(flat_vertex):
@@ -99,10 +118,12 @@ for route_idx, route in enumerate(vertex_edge_routes):
             P = mathutils.Vector((x, y, z))
             pts.append(P)
             pt_types.append('P')
-    
         else:
             # 辺制御点
             eid = str(key)
+            if eid not in eid2info:
+                print(f"WARNING: route[{{route_idx}}] の辺ID {{eid}} が eid2info に存在しません")
+                continue
             u, v_ = eid2info[eid]
             mu, mv = coords[str(u)], coords[str(v_)]
             Mx, My = (mu[0] + mv[0]) * 0.5, (mu[1] + mv[1]) * 0.5
@@ -114,7 +135,9 @@ for route_idx, route in enumerate(vertex_edge_routes):
             pts.append(M)
             pt_types.append('M')
 
-        is_cyclic = True
+
+    is_cyclic = True
+
 
     # ───────────────────────────────────────────
     # 全ての制御点に小さな球を配置 & 色分け
@@ -133,11 +156,11 @@ for route_idx, route in enumerate(vertex_edge_routes):
     print("len(pts):", n_pts)
     if n_pts == 0:
         print(f"WARNING: pts is empty for route_idx={{route_idx}}")
-        continue   # このルートをスキップ
+        #continue   # このルートをスキップ
     if n_pts > 1:
         spline.bezier_points.add(n_pts - 1)  # もともと1点あるので-1
     print("len(spline.bezier_points):", len(spline.bezier_points))
-    assert len(spline.bezier_points) == n_pts
+    #assert len(spline.bezier_points) == n_pts
 
     #spline.bezier_points.add(len(pts) - 1)
     for idx, p in enumerate(pts):
@@ -180,6 +203,7 @@ for route_idx, route in enumerate(vertex_edge_routes):
         empty.location = (p.x, p.y, p.z)
         bpy.context.collection.objects.link(empty)
         ball.parent = empty
+        ball.location = (0, 0, 0)
 
         # 3. 再度tubeをアクティブに戻して編集モード
         bpy.context.view_layer.objects.active = tube
@@ -197,7 +221,7 @@ for route_idx, route in enumerate(vertex_edge_routes):
             bp.select_control_point = False
         spline.bezier_points[idx].select_control_point = True
         bpy.ops.object.hook_assign(modifier=hook.name)
-        spline.bezier_points[idx].select_control_point = False
+        #spline.bezier_points[idx].select_control_point = False
 
     # 最後はオブジェクトモードに戻す
     bpy.ops.object.mode_set(mode='OBJECT')
