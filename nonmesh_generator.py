@@ -189,32 +189,51 @@ for route_idx, route in enumerate(vertex_edge_routes):
         # 2. 一度オブジェクトモードに戻って球・エンプティ追加
         bpy.ops.object.mode_set(mode='OBJECT')
         bpy.context.view_layer.objects.active = None
+
+        if kind == 'P':
+            v_id = str(route[vertex_counter * 2])   # 偶数番目が必ず頂点
+            orient = 'U' if p.z >  0 else 'D' if p.z <  0 else 'F'
+            empty_name = f"V{{v_id}}_{{orient}}_{{route_idx}}"
+        else:
+            eid = str(route[idx])
+            empty_name = f"E{{eid}}_{{route_idx}}"
+  
+   
+
+        empty = bpy.data.objects.new(empty_name, None)
+        #empty = bpy.data.objects.new(f'Empty_{{route_idx}}_{{idx}}', None)
+        empty.empty_display_type = 'PLAIN_AXES'
+        empty.location = (p.x, p.y, p.z)
+        bpy.context.collection.objects.link(empty)
+        
         bpy.ops.mesh.primitive_uv_sphere_add(
             radius=debug_r,
             location=(p.x, p.y, p.z),
             segments=16,
             ring_count=8
         )
+
         ball = bpy.context.active_object
-        #ball.location = (p.x, p.y, p.z)
+        mat  = mat_debug_inter if kind == 'P' else mat_debug_edge
+        ball.data.materials.append(mat)
+
         if kind == 'P':
             ball.data.materials.append(mat_debug_inter)
         else:
             ball.data.materials.append(mat_debug_edge)
 
-        empty = bpy.data.objects.new(f'Empty_{{route_idx}}_{{idx}}', None)
-        empty.empty_display_type = 'PLAIN_AXES'
-        empty.location = (p.x, p.y, p.z)
-        bpy.context.collection.objects.link(empty)
-        if kind == 'P':
-            v_id = str(route[vertex_counter * 2])   # 偶数番目が必ず頂点
-            empties[v_id] = empty                   # 登録
-            vertex_counter += 1 
-
         empties[(route_idx, idx)] = empty     # route_idx, idx で引けるように
 
         ball.parent = empty
         ball.location = (0, 0, 0)
+
+        if kind == 'P':
+           empties[('V', v_id, orient, route_idx)] = empty
+           empties[str(v_id)] = empty          # ←頂点ラベル用に従来キーも残す
+           vertex_counter += 1
+        else:
+           empties[('E', eid,  route_idx)] = empty
+           empties[(route_idx, idx)] = empty
 
         # 3. 再度tubeをアクティブに戻して編集モード
         bpy.context.view_layer.objects.active = tube
