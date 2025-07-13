@@ -122,6 +122,7 @@ def main():
     parser.add_argument('-L', '--label', type=str, default=None, help='ラベル名')
     parser.add_argument('-V', '--vertex_coords', type=str, default=None,
                         help='頂点座標ファイル(JSON)を指定するとcoordsとして読み込み')
+    parser.add_argument('-r', '--reverse', action='store_true', help='z_flagsをすべて反転（鏡像モデル用）')
     args = parser.parse_args()
 
     pd_code = ast.literal_eval(args.pd_code)
@@ -155,6 +156,12 @@ def main():
                     z_flags[k] *= -1
                     print(f"[INFO] z_flag {k} を反転 → {z_flags[k]}")
 
+    # -r オプションによる全反転
+    if args.reverse:
+        for k in z_flags:
+            z_flags[k] *= -1
+        print("[INFO] -r オプション指定により z_flags をすべて反転しました")
+
     preferred_signs = compute_preferred_signs(diag, eid2info)
 
     data = {
@@ -165,8 +172,13 @@ def main():
         "z_flags": z_flags,
         "preferred_signs": preferred_signs
     }
-    if args.label is not None:
-        data["label"] = args.label
+
+    label_to_output = args.label
+    if args.reverse and args.label is not None:
+        if not args.label.endswith("'"):
+            label_to_output = args.label + "'"
+    if label_to_output is not None:
+        data["label"] = label_to_output
 
     json_str = json.dumps(data, ensure_ascii=False, indent=2)
     with open(args.output, 'w', encoding='utf-8') as f:
