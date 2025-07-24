@@ -81,20 +81,13 @@ for route_idx, route in enumerate(vertex_edge_routes):
     # --- route構造チェック ---
     if len(route) < 3 or len(route) % 2 == 0:
         print(f"WARNING: route[{{route_idx}}] の長さ {{len(route)}} は奇数でなければなりません（頂点→辺→頂点→...）")
-        #continue
-    # 頂点→辺→頂点→辺... の構造になっているか簡易チェック
+
     structure_ok = True
     for i, key in enumerate(route):
-        if i % 2 == 0:
-            # 偶数番目: 頂点(数値またはstr)
-            pass
-        else:
-            # 奇数番目: 辺(数値またはstr)
+        if i % 2 == 1:  # 辺
             if str(key) not in eid2info:
                 print(f"WARNING: route[{{route_idx}}] の辺ID {{key}} が eid2info に存在しません")
                 structure_ok = False
-    #if not structure_ok:
-    #    continue
 
     pts      = []
     pt_types = []
@@ -108,17 +101,18 @@ for route_idx, route in enumerate(vertex_edge_routes):
                 print(f"WARNING: route[{{route_idx}}] の頂点ID {{v}} が coords に存在しません")
                 continue
             x, y = coords[v]
-            if i + 1 < len(route):
-                eid_next = str(route[i+1])
-            else:
-                # cyclicならroute[1]だが、今回は最後は始点に戻さない（cyclic設定次第）
-                eid_next = str(route[1]) if L > 1 else None
-            z_flag_key = f"{{eid_next}}-{{v}}"
-            sign = z_flags.get(z_flag_key, 1)
+
             if v == str(flat_vertex):
                 z = 0.0
             else:
+                if i + 1 < len(route):
+                    eid_next = str(route[i+1])
+                else:
+                    eid_next = str(route[1]) if L > 1 else None
+                z_flag_key = f"{{eid_next}}-{{v}}"
+                sign = z_flags.get(z_flag_key, 1)
                 z = sign * delta_z
+
             P = mathutils.Vector((x, y, z))
             pts.append(P)
             pt_types.append('P')
@@ -139,52 +133,70 @@ for route_idx, route in enumerate(vertex_edge_routes):
             pts.append(M)
             pt_types.append('M')
 
-
     is_cyclic = True
-
-
-    # ───────────────────────────────────────────
-    # 全ての制御点に小さな球を配置 & 色分け
-    # ───────────────────────────────────────────
-    mat_debug_inter = bpy.data.materials.new(name="DebugRed")
-    mat_debug_inter.diffuse_color = (1.0, 0.0, 0.0, 1.0)
-    mat_debug_edge  = bpy.data.materials.new(name="DebugBlue")
-    mat_debug_edge.diffuse_color  = (0.0, 0.0, 1.0, 1.0)
 
     # --- Bezier Curve 作成 ---
     curve_data = bpy.data.curves.new(f'GraphTube_{{route_idx}}', 'CURVE')
     curve_data.dimensions = '3D'
     spline = curve_data.splines.new('BEZIER')
-    # --- ここで n_ptsチェック＆安全なbezier_points追加 ---
+
     n_pts = len(pts)
     print("len(pts):", n_pts)
     if n_pts == 0:
         print(f"WARNING: pts is empty for route_idx={{route_idx}}")
-        #continue   # このルートをスキップ
     if n_pts > 1:
-        spline.bezier_points.add(n_pts - 1)  # もともと1点あるので-1
+        spline.bezier_points.add(n_pts - 1)
     print("len(spline.bezier_points):", len(spline.bezier_points))
-    #assert len(spline.bezier_points) == n_pts
 
-    #spline.bezier_points.add(len(pts) - 1)
     for idx, p in enumerate(pts):
         bp = spline.bezier_points[idx]
         bp.co = p
         bp.handle_left_type = bp.handle_right_type = 'AUTO'
     spline.use_cyclic_u = is_cyclic
     curve_data.resolution_u     = 16
-    curve_data.bevel_depth      = 0.01
+    curve_data.bevel_depth      = 0.02
     curve_data.bevel_resolution = 32
 
     tube = bpy.data.objects.new(f'GraphTube_{{route_idx}}', curve_data)
     bpy.context.collection.objects.link(tube)
+
+    # --- チェッカーマテリアル（細かさ調整可） ---
+    mat_loop = bpy.data.materials.new(name=f"LoopColor{{route_idx+1}}")
+    mat_loop.use_nodes = True
+    nodes = mat_loop.node_tree.nodes
+    links = mat_loop.node_tree.links
+    for node in nodes:
+        nodes.remove(node)
+
+    output_node = nodes.new(type='ShaderNodeOutputMaterial')
+    output_node.location = (400, 0)
+
+    bsdf_node = nodes.new(type='ShaderNodeBsdfPrincipled')
+    bsdf_node.location = (200, 0)
+
+    checker_node = nodes.new(type='ShaderNodeTexChecker')
+    checker_node.location = (0, 0)
+    checker_node.inputs['Scale'].default_value = 80.0
+    checker_node.inputs['Color1'].default_value = (0.9, 0.9, 0.9, 1.0)
+    checker_node.inputs['Color2'].default_value = (0.5, 0.5, 0.5, 1.0)
+
+    coord_node = nodes.new(type='ShaderNodeTexCoord')
+    coord_node.location = (-200, 0)
+
+    links.new(coord_node.outputs['Generated'], checker_node.inputs['Vector'])
+    links.new(checker_node.outputs['Color'], bsdf_node.inputs['Base Color'])
+    links.new(checker_node.outputs['Color'], bsdf_node.inputs['Roughness'])
+    links.new(bsdf_node.outputs['BSDF'], output_node.inputs['Surface'])
+
+    tube.data.materials.clear()
+    tube.data.materials.append(mat_loop)
+    tube.active_material = mat_loop
 
     # 1. チューブをアクティブ＆編集モードへ
     bpy.context.view_layer.objects.active = tube
     tube.select_set(True)
     bpy.ops.object.mode_set(mode='EDIT')
 
-    
     vertex_counter = 0
     debug_r = sphere_r * 0.5
     for idx, (p, kind) in enumerate(zip(pts, pt_types)):
@@ -193,49 +205,40 @@ for route_idx, route in enumerate(vertex_edge_routes):
         bpy.context.view_layer.objects.active = None
 
         if kind == 'P':
-            v_id = str(route[vertex_counter * 2])   # 偶数番目が必ず頂点
+            v_id = str(route[vertex_counter * 2])
             orient = 'U' if p.z >  0 else 'D' if p.z <  0 else 'F'
             empty_name = f"V{{v_id}}_{{orient}}_{{route_idx}}"
         else:
             eid = str(route[idx])
             empty_name = f"E{{eid}}_{{route_idx}}"
-  
-   
 
         empty = bpy.data.objects.new(empty_name, None)
-        #empty = bpy.data.objects.new(f'Empty_{{route_idx}}_{{idx}}', None)
         empty.empty_display_type = 'PLAIN_AXES'
         empty.location = (p.x, p.y, p.z)
         bpy.context.collection.objects.link(empty)
-        
+
         bpy.ops.mesh.primitive_uv_sphere_add(
             radius=debug_r,
             location=(p.x, p.y, p.z),
             segments=16,
             ring_count=8
         )
-
-        ball = bpy.context.active_object
+        ball_dbg = bpy.context.active_object
         mat  = mat_debug_inter if kind == 'P' else mat_debug_edge
-        ball.data.materials.append(mat)
+        ball_dbg.data.materials.append(mat)
+
+        ball_dbg.parent = empty
+        ball_dbg.location = (0, 0, 0)
+
+        empties[(route_idx, idx)] = empty
 
         if kind == 'P':
-            ball.data.materials.append(mat_debug_inter)
+            empties[('V', v_id, orient, route_idx)] = empty
+            empties[str(v_id)] = empty
+            vertex_counter += 1
         else:
-            ball.data.materials.append(mat_debug_edge)
-
-        empties[(route_idx, idx)] = empty     # route_idx, idx で引けるように
-
-        ball.parent = empty
-        ball.location = (0, 0, 0)
-
-        if kind == 'P':
-           empties[('V', v_id, orient, route_idx)] = empty
-           empties[str(v_id)] = empty          # ←頂点ラベル用に従来キーも残す
-           vertex_counter += 1
-        else:
-           empties[('E', eid,  route_idx)] = empty
-           empties[(route_idx, idx)] = empty
+            empties[('E', eid, route_idx)] = empty
+            empties[(route_idx, idx)] = empty
 
         # 3. 再度tubeをアクティブに戻して編集モード
         bpy.context.view_layer.objects.active = tube
@@ -253,84 +256,46 @@ for route_idx, route in enumerate(vertex_edge_routes):
             bp.select_control_point = False
         spline.bezier_points[idx].select_control_point = True
         bpy.ops.object.hook_assign(modifier=hook.name)
-        #spline.bezier_points[idx].select_control_point = False
 
-    flat_empty_name = "FLAT_ROOT"
-    if flat_empty_name not in bpy.data.objects:
-        flat_empty = bpy.data.objects.new(flat_empty_name, None)
-        flat_empty.empty_display_type = 'PLAIN_AXES'
-        flat_empty.location = (
-            coords[f"{{flat_vertex}}"][0],
-            coords[f"{{flat_vertex}}"][1],
-            0.0
-        )
-        bpy.context.collection.objects.link(flat_empty)
-    else:
-        flat_empty = bpy.data.objects[flat_empty_name]
+# ───────────────────────────────────────────
+# 4. FLAT_ROOT 作成 & 親子付け（ワールド位置維持）
+# ───────────────────────────────────────────
+flat_empty_name = "FLAT_ROOT"
+if flat_empty_name not in bpy.data.objects:
+    flat_empty = bpy.data.objects.new(flat_empty_name, None)
+    flat_empty.empty_display_type = 'PLAIN_AXES'
+    flat_empty.location = (
+        coords[f"{{flat_vertex}}"][0],
+        coords[f"{{flat_vertex}}"][1],
+        0.0
+    )
+    bpy.context.collection.objects.link(flat_empty)
+else:
+    flat_empty = bpy.data.objects[flat_empty_name]
 
-    for obj in bpy.data.objects:
-        if obj.name.startswith(f"V{{flat_vertex}}"):
-            obj.parent = flat_empty
-            obj.location = (
-                obj.location[0] - flat_empty.location[0],
-                obj.location[1] - flat_empty.location[1],
-                obj.location[2] - flat_empty.location[2],
-            )
+# 親子付けユーティリティ
 
-    big_ball_name = f"BigBall_{{flat_vertex}}"
-    if big_ball_name in bpy.data.objects:
-        big_ball = bpy.data.objects[big_ball_name]
-        big_ball.parent = flat_empty
-        big_ball.location = (0, 0, 0)
+def parent_keep_world(child, parent):
+    mw = child.matrix_world.copy()
+    child.parent = parent
+    child.matrix_parent_inverse = parent.matrix_world.inverted()
+    child.matrix_world = mw
 
+# V{flat_vertex}_F_* の Empty を FLAT_ROOT の子に（位置維持）
+flat_targets = [o for o in bpy.data.objects
+                if o.type == 'EMPTY' and o.name.startswith(f"V{{flat_vertex}}_F")]
+for o in flat_targets:
+    parent_keep_world(o, flat_empty)
 
-    # 最後はオブジェクトモードに戻す
-    bpy.ops.object.mode_set(mode='OBJECT')
-    tube.select_set(False)
+# BigBall も同じ場所へ
+big_ball_name = f"BigBall_{{flat_vertex}}"
+if big_ball_name in bpy.data.objects:
+    bb = bpy.data.objects[big_ball_name]
+    parent_keep_world(bb, flat_empty)
 
-    # --- ★ 輪っかごとに色を分ける ---
-    if route_idx == 0:
-        mat_loop = bpy.data.materials.new(name="LoopColor1")
-        mat_loop.diffuse_color = (1.0, 1.0, 1.0, 1.0)  # 白、アルファ1
-    elif route_idx == 1:
-        mat_loop = bpy.data.materials.new(name="LoopColor2")
-        mat_loop.diffuse_color = (1.0, 0.5, 0.5, 1.0)  # 薄い赤
-    else:
-        mat_loop = bpy.data.materials.new(name=f"LoopColor{{route_idx+1}}")
-        mat_loop.diffuse_color = (0.8, 0.8, 1.0, 1.0)  # 薄い青など
-
-    tube.data.materials.append(mat_loop)
-
-    # --- メッシュ変換 & スムーズシェーディング ---
-    #bpy.context.view_layer.objects.active = tube
-    #tube.select_set(True)
-    #bpy.ops.object.convert(target='MESH')
-    #tube = bpy.context.active_object
-    #mesh = tube.data
-    #for poly in mesh.polygons:
-    #    poly.use_smooth = True
-
-    # --- 辺ラベル配置（各ルートごとに） ---
-    for i, key in enumerate(route):
-        if i % 2 == 1:
-            eid = str(key)
-            Mx, My, Mz = pts[i].x, pts[i].y, pts[i].z
-            txt_curve = bpy.data.curves.new(name=f"E{{eid}}_{{route_idx}}", type='FONT')
-            txt_curve.body = str(eid)
-            txt_obj = bpy.data.objects.new(name=f"E{{eid}}_{{route_idx}}", object_data=txt_curve)
-            txt_obj.location = (Mx, My, Mz + edge_label_offset)
-            txt_obj.scale    = (0.1, 0.1, 0.1)
-            txt_obj.data.materials.append(mat_e)
-            bpy.context.collection.objects.link(txt_obj)
-
-            par = empties.get((route_idx, i))
-            if par:
-                txt_obj.parent = par
-                # Empty 原点に一致させる
-                txt_obj.location = (0, 0, edge_label_offset)
-
-# --- 頂点ラベルは全体共通で一回だけ ---
-
+# ───────────────────────────────────────────
+# 5. 頂点ラベル
+# ───────────────────────────────────────────
 for v, coord in coords.items():
     txt_curve = bpy.data.curves.new(name=f"V{{v}}", type='FONT')
     txt_curve.body = str(v)
@@ -340,13 +305,14 @@ for v, coord in coords.items():
     txt_obj.data.materials.append(mat_v)
     bpy.context.collection.objects.link(txt_obj)
 
-    par = empties.get(str(v))   # kind=='P' のとき登録済み
+    par = empties.get(str(v))
     if par:
-        
         txt_obj.parent = par
         txt_obj.location = (0, 0, sphere_r + 0.1)
 
-#HANDLE_IDS = ['v2', 'v4', 'e6', 'e7']
+# ───────────────────────────────────────────
+# 6. HandlePlane（flat系は除外）
+# ───────────────────────────────────────────
 HANDLE_IDS = {handle_ids_str}
 
 empty_objs = []
@@ -357,9 +323,11 @@ for hid in HANDLE_IDS:
         prefix = f"E{{hid[1:]}}"
     else:
         continue
-
     for obj in bpy.data.objects:
         if obj.name.startswith(prefix):
+            # FLAT頂点(F)は plane の親にしない
+            if obj.name.startswith(f"V{{flat_vertex}}_F"):
+                continue
             empty_objs.append(obj)
 
 # --- planeはここで1回だけ作る！ ---
@@ -374,27 +342,24 @@ if empty_objs:
     plane.data.materials.append(mat)
 
     for obj in empty_objs:
-        # A) このオブジェクトも選択
         bpy.ops.object.select_all(action='DESELECT')
         plane.select_set(True)
         obj.select_set(True)
         bpy.context.view_layer.objects.active = plane
-
-        # B) keep_transform=True で親子付け
         bpy.ops.object.parent_set(type='OBJECT', keep_transform=True)
 
-    
-frame_start = 0  # または1にする場合は 1 に変更
-
-# Emptiesにまとめてキーフレーム挿入
+# ───────────────────────────────────────────
+# 7. キーフレーム記録
+# ───────────────────────────────────────────
+frame_start = 0
 for obj in bpy.data.objects:
     if obj.type == 'EMPTY':
         obj.keyframe_insert(data_path="location", frame=frame_start)
 
-# plane（HandlePlane）があればそれも記録
 plane = bpy.data.objects.get("HandlePlane")
 if plane:
     plane.keyframe_insert(data_path="location", frame=frame_start)
+
 
 # ───────────────────────────────────────────
 # 7. カメラ & 三灯ライティング
