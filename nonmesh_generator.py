@@ -346,7 +346,44 @@ for v, coord in coords.items():
         txt_obj.parent = par
         txt_obj.location = (0, 0, sphere_r + 0.1)
 
+#HANDLE_IDS = ['v2', 'v4', 'e6', 'e7']
+HANDLE_IDS = {handle_ids_str}
 
+empty_objs = []
+for hid in HANDLE_IDS:
+    if hid.startswith("v"):
+        prefix = f"V{{hid[1:]}}"
+    elif hid.startswith("e"):
+        prefix = f"E{{hid[1:]}}"
+    else:
+        continue
+
+    for obj in bpy.data.objects:
+        if obj.name.startswith(prefix):
+            empty_objs.append(obj)
+
+# --- planeはここで1回だけ作る！ ---
+if empty_objs:
+    cx = sum(obj.location.x for obj in empty_objs) / len(empty_objs)
+    cy = sum(obj.location.y for obj in empty_objs) / len(empty_objs)
+    bpy.ops.mesh.primitive_plane_add(size=0.2, location=(cx, cy, 0.0))
+    plane = bpy.context.active_object
+    plane.name = "HandlePlane"
+    mat = bpy.data.materials.new(name="HandleMat")
+    mat.diffuse_color = (0.7, 0.8, 0.4, 0.6)
+    plane.data.materials.append(mat)
+
+    for obj in empty_objs:
+        # A) このオブジェクトも選択
+        bpy.ops.object.select_all(action='DESELECT')
+        plane.select_set(True)
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = plane
+
+        # B) keep_transform=True で親子付け
+        bpy.ops.object.parent_set(type='OBJECT', keep_transform=True)
+
+    
 
 # ───────────────────────────────────────────
 # 7. カメラ & 三灯ライティング
@@ -412,12 +449,30 @@ def main():
     pref_entries       = make_entries(data['preferred_signs'])
     label_entry = repr(data.get("label", None))
 
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('inputfile', help="入力jsonファイル")  # 位置引数
+    parser.add_argument('-H', '--handle', type=str, default="", help="平面ハンドル用IDリスト（例: v2,e5,v3）")
+    args = parser.parse_args()
+
+    # ファイル名
+    filename = args.inputfile
+
+    # -Hオプションの処理
+    handle_ids = []
+    if args.handle:
+        handle_ids = [s.strip() for s in args.handle.split(",") if s.strip()]
+
+    handle_ids_str = repr(handle_ids) 
+
     script = TEMPLATE.format(
         coords_entries     = coords_entries,
         vertex_edge_routes = json.dumps(vertex_edge_routes, ensure_ascii=False, indent=2),
         eid2info_entries   = eid2info_entries,
         flat_vertex        = flat_vertex,
-        big_ball_name = f"BigBall_{flat_vertex}",
+        big_ball_name      = f"BigBall_{flat_vertex}",
+        handle_ids_str     = handle_ids_str,
         z_flags_entries    = z_flags_entries,
         pref_entries       = pref_entries,
         label              = label_entry
