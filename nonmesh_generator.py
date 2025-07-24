@@ -54,6 +54,8 @@ bpy.ops.mesh.primitive_uv_sphere_add(
     segments=32,
     ring_count=16
 )
+ball = bpy.context.active_object
+ball.name = "{big_ball_name}"
 
 # ───────────────────────────────────────────
 # 3. 各ルートごとに制御点リスト構築・チューブ作成
@@ -253,6 +255,35 @@ for route_idx, route in enumerate(vertex_edge_routes):
         bpy.ops.object.hook_assign(modifier=hook.name)
         #spline.bezier_points[idx].select_control_point = False
 
+    flat_empty_name = "FLAT_ROOT"
+    if flat_empty_name not in bpy.data.objects:
+        flat_empty = bpy.data.objects.new(flat_empty_name, None)
+        flat_empty.empty_display_type = 'PLAIN_AXES'
+        flat_empty.location = (
+            coords[f"{{flat_vertex}}"][0],
+            coords[f"{{flat_vertex}}"][1],
+            0.0
+        )
+        bpy.context.collection.objects.link(flat_empty)
+    else:
+        flat_empty = bpy.data.objects[flat_empty_name]
+
+    for obj in bpy.data.objects:
+        if obj.name.startswith(f"V{{flat_vertex}}"):
+            obj.parent = flat_empty
+            obj.location = (
+                obj.location[0] - flat_empty.location[0],
+                obj.location[1] - flat_empty.location[1],
+                obj.location[2] - flat_empty.location[2],
+            )
+
+    big_ball_name = f"BigBall_{{flat_vertex}}"
+    if big_ball_name in bpy.data.objects:
+        big_ball = bpy.data.objects[big_ball_name]
+        big_ball.parent = flat_empty
+        big_ball.location = (0, 0, 0)
+
+
     # 最後はオブジェクトモードに戻す
     bpy.ops.object.mode_set(mode='OBJECT')
     tube.select_set(False)
@@ -314,6 +345,8 @@ for v, coord in coords.items():
         
         txt_obj.parent = par
         txt_obj.location = (0, 0, sphere_r + 0.1)
+
+
 
 # ───────────────────────────────────────────
 # 7. カメラ & 三灯ライティング
@@ -384,6 +417,7 @@ def main():
         vertex_edge_routes = json.dumps(vertex_edge_routes, ensure_ascii=False, indent=2),
         eid2info_entries   = eid2info_entries,
         flat_vertex        = flat_vertex,
+        big_ball_name = f"BigBall_{flat_vertex}",
         z_flags_entries    = z_flags_entries,
         pref_entries       = pref_entries,
         label              = label_entry
