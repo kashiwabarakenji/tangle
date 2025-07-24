@@ -425,13 +425,31 @@ cam.location      = (0.0, 0.0, 10.0)
 cam.rotation_euler = (math.radians(90), 0.0, 0.0)
 bpy.context.collection.objects.link(cam)
 bpy.context.scene.camera = cam
-light = bpy.data.lights.new('L','AREA')
-light.energy = 800
+
+# 上からのライト（主光源）
+light = bpy.data.lights.new('L', 'AREA')
+light.energy = 700
 light_obj = bpy.data.objects.new('Light', light)
-light_obj.location = (5, -5, 8)
+light_obj.location = (1, 1, 6)
+light_obj.rotation_euler = (math.radians(-45), 0.0, math.radians(45))
 bpy.context.collection.objects.link(light_obj)
 
-bpy.context.scene.render.engine   = 'CYCLES'
+# ↓↓↓ 追加：下からの補助光 ↓↓↓
+
+bottom_light = bpy.data.lights.new('BottomLight', 'AREA')
+bottom_light.energy = 300  # 上の半分の明るさ（調整可）
+bottom_light.color = (0.9, 0.9, 1.0)  # やや青みを加えると自然
+
+bottom_light_obj = bpy.data.objects.new('BottomLight', bottom_light)
+bottom_light_obj.location = (0.0, 0.0, -5.0)  # シーンの下側に配置
+bottom_light_obj.rotation_euler = (math.radians(180), 0.0, 0.0)  # 上向きに照らす
+bottom_light.shape = 'DISK'
+bottom_light.size = 6.0  # 面積を広めにとると柔らかい光に
+
+bpy.context.collection.objects.link(bottom_light_obj)
+
+# レンダー設定（そのまま）
+bpy.context.scene.render.engine = 'CYCLES'
 bpy.context.scene.cycles.samples = 128
 
 print("完了：F12でレンダリングしてください。")
