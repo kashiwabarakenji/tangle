@@ -160,8 +160,8 @@ for route_idx, route in enumerate(vertex_edge_routes):
     tube = bpy.data.objects.new(f'GraphTube_{{route_idx}}', curve_data)
     bpy.context.collection.objects.link(tube)
 
-    # --- チェッカーマテリアル（細かさ調整可） ---
-    mat_loop = bpy.data.materials.new(name=f"LoopColor{{route_idx+1}}")
+    # チェッカー模様のマテリアル
+    mat_loop = bpy.data.materials.new(name=f"LoopChecker_{{route_idx+1}}")
     mat_loop.use_nodes = True
     nodes = mat_loop.node_tree.nodes
     links = mat_loop.node_tree.links
@@ -169,28 +169,35 @@ for route_idx, route in enumerate(vertex_edge_routes):
         nodes.remove(node)
 
     output_node = nodes.new(type='ShaderNodeOutputMaterial')
-    output_node.location = (400, 0)
-
-    bsdf_node = nodes.new(type='ShaderNodeBsdfPrincipled')
-    bsdf_node.location = (200, 0)
-
+    bsdf_node   = nodes.new(type='ShaderNodeBsdfPrincipled')
     checker_node = nodes.new(type='ShaderNodeTexChecker')
-    checker_node.location = (0, 0)
-    checker_node.inputs['Scale'].default_value = 80.0
-    checker_node.inputs['Color1'].default_value = (0.9, 0.9, 0.9, 1.0)
-    checker_node.inputs['Color2'].default_value = (0.5, 0.5, 0.5, 1.0)
+    coord_node  = nodes.new(type='ShaderNodeTexCoord')
 
-    coord_node = nodes.new(type='ShaderNodeTexCoord')
+    # 輪っかごとにスケール変更
+    checker_node.inputs['Scale'].default_value = 60 + 20 * route_idx
+
+    # 輪っかごとに色変更
+    colors = [
+        ((0.9, 0.9, 0.9, 1.0), (0.5, 0.5, 0.5, 1.0)),  # 白-グレー
+        ((1.0, 0.8, 0.8, 1.0), (0.6, 0.2, 0.2, 1.0)),  # 赤系
+        ((0.8, 1.0, 0.8, 1.0), (0.2, 0.6, 0.2, 1.0)),  # 緑系
+    ]
+    c1, c2 = colors[route_idx % len(colors)]
+    checker_node.inputs['Color1'].default_value = c1
+    checker_node.inputs['Color2'].default_value = c2
+
+    # ノード配置と接続
+    output_node.location = (400, 0)
+    bsdf_node.location = (200, 0)
+    checker_node.location = (0, 0)
     coord_node.location = (-200, 0)
 
     links.new(coord_node.outputs['Generated'], checker_node.inputs['Vector'])
     links.new(checker_node.outputs['Color'], bsdf_node.inputs['Base Color'])
-    links.new(checker_node.outputs['Color'], bsdf_node.inputs['Roughness'])
     links.new(bsdf_node.outputs['BSDF'], output_node.inputs['Surface'])
 
     tube.data.materials.clear()
     tube.data.materials.append(mat_loop)
-    tube.active_material = mat_loop
 
     # 1. チューブをアクティブ＆編集モードへ
     bpy.context.view_layer.objects.active = tube
@@ -260,6 +267,7 @@ for route_idx, route in enumerate(vertex_edge_routes):
 # ───────────────────────────────────────────
 # 4. FLAT_ROOT 作成 & 親子付け（ワールド位置維持）
 # ───────────────────────────────────────────
+
 flat_empty_name = "FLAT_ROOT"
 if flat_empty_name not in bpy.data.objects:
     flat_empty = bpy.data.objects.new(flat_empty_name, None)
@@ -277,21 +285,45 @@ else:
 
 def parent_keep_world(child, parent):
     mw = child.matrix_world.copy()
-    child.parent = parent
+    #child.parent = parent
     child.matrix_parent_inverse = parent.matrix_world.inverted()
+    child.matrix_world = mw
+
+def parent_keep_world_safe(child, parent):
+    # ViewLayer更新（重要）
+    bpy.context.view_layer.update()
+
+    # 親子関係が既にある場合の防御策
+    if child.parent is not None:
+        child.matrix_world = child.matrix_world  # 明示的に固定
+        child.parent = None
+        bpy.context.view_layer.update()
+
+    # ワールド行列を保存
+    mw = child.matrix_world.copy()
+
+    # 親子関係設定
+    child.parent = parent
+
+    # 親の行列更新後に逆行列をセット
+    bpy.context.view_layer.update()
+    child.matrix_parent_inverse = parent.matrix_world.inverted()
+
+    # 子の行列を復元（ズレを打ち消す）
     child.matrix_world = mw
 
 # V{flat_vertex}_F_* の Empty を FLAT_ROOT の子に（位置維持）
 flat_targets = [o for o in bpy.data.objects
                 if o.type == 'EMPTY' and o.name.startswith(f"V{{flat_vertex}}_F")]
+
 for o in flat_targets:
-    parent_keep_world(o, flat_empty)
+    parent_keep_world_safe(o, flat_empty)
 
 # BigBall も同じ場所へ
 big_ball_name = f"BigBall_{{flat_vertex}}"
 if big_ball_name in bpy.data.objects:
     bb = bpy.data.objects[big_ball_name]
-    parent_keep_world(bb, flat_empty)
+    parent_keep_world_safe(bb, flat_empty)
 
 # ───────────────────────────────────────────
 # 5. 頂点ラベル
@@ -301,15 +333,39 @@ for v, coord in coords.items():
     txt_curve.body = str(v)
     txt_obj = bpy.data.objects.new(name=f"V{{v}}", object_data=txt_curve)
     txt_obj.location = (coord[0], coord[1], sphere_r + 0.1)
-    txt_obj.scale    = (0.2, 0.2, 0.2)
+    txt_obj.scale    = (0.15, 0.15, 0.15)  # ← ✅ 大きめに戻す
     txt_obj.data.materials.append(mat_v)
     bpy.context.collection.objects.link(txt_obj)
 
-    par = empties.get(str(v))
+    # 上側のエンプティのみを親にする（元の表示に合わせる）
+    par = empties.get(('V', str(v), 'U', 0))  # 'U' = up, route_idx = 0（単一ルート前提）
     if par:
         txt_obj.parent = par
         txt_obj.location = (0, 0, sphere_r + 0.1)
 
+# ───────────────────────────────────────────
+# 5.5. 辺ラベル
+# ───────────────────────────────────────────
+for eid, (u, v) in eid2info.items():
+    mu = coords[str(u)]
+    mv = coords[str(v)]
+    
+    Mx, My = (mu[0] + mv[0]) * 0.5, (mu[1] + mv[1]) * 0.5
+    M = mathutils.Vector((Mx, My, 0.0))
+
+    sign = - preferred_signs.get(str(eid), 0)
+    dx, dy = mv[0] - mu[0], mv[1] - mu[1]
+    perp = mathutils.Vector((-dy, dx, 0.0)).normalized()
+    M += perp * off_mag * sign
+
+    txt_curve = bpy.data.curves.new(name=f"E{{eid}}", type='FONT')
+    txt_curve.body = str(eid)
+    txt_obj = bpy.data.objects.new(name=f"E{{eid}}", object_data=txt_curve)
+    txt_obj.location = (M.x, M.y, 0.05)
+    txt_obj.scale = (0.1, 0.1, 0.1)
+    txt_obj.data.materials.append(mat_e)
+    bpy.context.collection.objects.link(txt_obj)
+  
 # ───────────────────────────────────────────
 # 6. HandlePlane（flat系は除外）
 # ───────────────────────────────────────────
