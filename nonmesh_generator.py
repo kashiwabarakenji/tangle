@@ -384,6 +384,17 @@ if empty_objs:
         bpy.ops.object.parent_set(type='OBJECT', keep_transform=True)
 
     
+frame_start = 0  # または1にする場合は 1 に変更
+
+# Emptiesにまとめてキーフレーム挿入
+for obj in bpy.data.objects:
+    if obj.type == 'EMPTY':
+        obj.keyframe_insert(data_path="location", frame=frame_start)
+
+# plane（HandlePlane）があればそれも記録
+plane = bpy.data.objects.get("HandlePlane")
+if plane:
+    plane.keyframe_insert(data_path="location", frame=frame_start)
 
 # ───────────────────────────────────────────
 # 7. カメラ & 三灯ライティング
