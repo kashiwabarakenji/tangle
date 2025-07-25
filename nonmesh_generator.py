@@ -498,6 +498,38 @@ if label is not None:
     txt_obj.data.materials.append(mat_label)
     bpy.context.collection.objects.link(txt_obj)
 
+    #for area in bpy.context.window.screen.areas:
+    #    if area.type == 'VIEW_3D':
+    #        override = {{'window': bpy.context.window, 'screen': bpy.context.window.screen, 'area': area, 'region': area.regions[-1]}}
+    #        bpy.ops.view3d.camera_to_view(override)
+    #        break
+            
+    scene = bpy.context.scene
+    render = scene.render
+
+    # 出力ファイル名・ディレクトリ
+    #render.filepath = "/Users/kashiwa/tangle/output.mp4"   # お好きなパスに
+
+    # 出力形式をFFmpeg動画に設定
+    render.image_settings.file_format = 'FFMPEG'
+
+    # コーデック設定
+    ffmpeg = render.ffmpeg
+    ffmpeg.format = 'MPEG4'       # mp4コンテナ（通常はこれでOK）
+    ffmpeg.codec = 'H264'         # H.264コーデック
+    ffmpeg.constant_rate_factor = 'MEDIUM'   # 品質バランス
+    ffmpeg.video_bitrate = 6000              # kbps（必要に応じて調整）
+
+    # オーディオも書き出す場合
+    ffmpeg.audio_codec = 'AAC'
+
+    # フレームレート
+    render.fps = 15
+
+    # レンダリング（アニメーション全体）
+    #bpy.ops.render.render(animation=True)
+
+
 '''
 
 def make_entries(d):
