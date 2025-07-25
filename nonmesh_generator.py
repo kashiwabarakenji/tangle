@@ -14,6 +14,8 @@ TEMPLATE = '''import bpy, mathutils, math
 for obj in list(bpy.data.objects):
     bpy.data.objects.remove(obj, do_unlink=True)
 
+bpy.data.orphans_purge(do_recursive=True)
+
 # ───────────────────────────────────────────
 # 1. 入力データ
 # ───────────────────────────────────────────
@@ -206,18 +208,21 @@ for route_idx, route in enumerate(vertex_edge_routes):
 
     vertex_counter = 0
     debug_r = sphere_r * 0.5
+
+    for m in tube.modifiers:
+        tube.modifiers.remove(m)
+
     for idx, (p, kind) in enumerate(zip(pts, pt_types)):
-        # 2. 一度オブジェクトモードに戻って球・エンプティ追加
         bpy.ops.object.mode_set(mode='OBJECT')
         bpy.context.view_layer.objects.active = None
 
         if kind == 'P':
             v_id = str(route[vertex_counter * 2])
             orient = 'U' if p.z >  0 else 'D' if p.z <  0 else 'F'
-            empty_name = f"V{{v_id}}_{{orient}}_{{route_idx}}"
+            empty_name = f"V{{v_id}}_{{orient}}_{{route_idx}}_{{idx}}"
         else:
             eid = str(route[idx])
-            empty_name = f"E{{eid}}_{{route_idx}}"
+            empty_name = f"E{{eid}}_{{route_idx}}_{{idx}}"
 
         empty = bpy.data.objects.new(empty_name, None)
         empty.empty_display_type = 'PLAIN_AXES'
@@ -247,22 +252,26 @@ for route_idx, route in enumerate(vertex_edge_routes):
             empties[('E', eid, route_idx)] = empty
             empties[(route_idx, idx)] = empty
 
-        # 3. 再度tubeをアクティブに戻して編集モード
+        # ----- フック割当ごとにmode遷移をはさむ -----
         bpy.context.view_layer.objects.active = tube
         tube.select_set(True)
         bpy.ops.object.mode_set(mode='EDIT')
 
-        # 4. フックモディファイア追加
         hook = tube.modifiers.new(name=f"Hook_{{route_idx}}_{{idx}}", type='HOOK')
         hook.object = empty
         hook.strength = 1.0
 
-        # 5. 制御点選択＆フック割当
         spline = tube.data.splines[0]
         for bp in spline.bezier_points:
             bp.select_control_point = False
         spline.bezier_points[idx].select_control_point = True
         bpy.ops.object.hook_assign(modifier=hook.name)
+
+        # --- 必ず編集モードを抜けて状態同期 ---
+        bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.context.view_layer.update()
+
+
 
 # ───────────────────────────────────────────
 # 4. FLAT_ROOT 作成 & 親子付け（ワールド位置維持）
@@ -365,7 +374,17 @@ for eid, (u, v) in eid2info.items():
     txt_obj.scale = (0.1, 0.1, 0.1)
     txt_obj.data.materials.append(mat_e)
     bpy.context.collection.objects.link(txt_obj)
-  
+
+    # 親子付け: empties[('E', eid, route_idx)]のいずれかを親に
+    par = None
+    for k in empties:
+        if isinstance(k, tuple) and k[0] == 'E' and k[1] == str(eid):
+            par = empties[k]
+            break
+    if par:
+        txt_obj.parent = par
+        txt_obj.location = (0, 0, 0.05)
+
 # ───────────────────────────────────────────
 # 6. HandlePlane（flat系は除外）
 # ───────────────────────────────────────────
@@ -478,6 +497,7 @@ if label is not None:
     mat_label.diffuse_color = (0.0, 1.0, 0.0, 1.0)
     txt_obj.data.materials.append(mat_label)
     bpy.context.collection.objects.link(txt_obj)
+
 '''
 
 def make_entries(d):
