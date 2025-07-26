@@ -30,10 +30,21 @@ for eid, (u, v) in eid2verts.items():
 
 fig, ax = plt.subplots(figsize=(5, 5))
 
-for v, (x, y) in coords.items():
-    # flat_vertexも普通に表示
-    ax.scatter(x, y, color='white', edgecolors='black', s=0, zorder=5)
-    ax.text(x, y, str(v), fontsize=14, color='k', va='center', ha='center', zorder=6)
+if args.general_graph:
+    for v, (x, y) in coords.items():
+        # flat_vertexも普通に表示
+        ax.scatter(x, y, color='white', edgecolors='black', s=0, zorder=5)
+        ax.text(x, y, str(v), fontsize=14, color='k', va='center', ha='center', zorder=6)
+else:
+    for v, (x, y) in coords.items():
+        if v == flat_vertex:
+            # flat_vertexは大きめの円で強調
+            ax.scatter(x, y, color='white', edgecolors='red', s=0, zorder=5)
+            ax.text(x, y, str(v), fontsize=14, color='red', va='center', ha='center', zorder=6)
+        else:
+            # 通常の頂点は小さめの円
+            ax.scatter(x, y, color='white', edgecolors='black', s=0, zorder=5)
+            ax.text(x, y, str(v), fontsize=14, color='k', va='center', ha='center', zorder=6)
 
 for eid, (u, v) in eid2verts.items():
     sign = preferred_signs.get(eid, 0)
@@ -45,7 +56,7 @@ for eid, (u, v) in eid2verts.items():
     dx = x1 - x0
     dy = y1 - y0
     dist = math.hypot(dx, dy)
-    shrink_len = 0.07  # 頂点半径より少し大きめ（調整可）
+    shrink_len = 0.02  # 頂点半径より少し大きめ（調整可）
     if dist > 0.0001:
         x0_ = x0 + dx * (shrink_len / dist)
         y0_ = y0 + dy * (shrink_len / dist)
